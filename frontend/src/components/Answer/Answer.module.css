@@ -44,7 +44,7 @@
 
 .answerDisclaimerContainer {
   justify-content: center;
-  display: flex;
+  /* display: flex; */
 }
 
 .answerDisclaimer {
