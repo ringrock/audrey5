@@ -140,6 +140,7 @@ export type FrontendSettings = {
   ui?: UI
   sanitize_answer?: boolean
   oyd_enabled?: boolean
+  available_llm_providers?: string[]
 }
 
 export enum Feedback {

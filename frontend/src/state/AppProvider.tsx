@@ -95,7 +95,8 @@ const initialState: AppState = {
   isAuthenticated: false,
   customizationPreferences: {
     responseSize: 'medium',
-    documentsCount: 5
+    documentsCount: 5,
+    llmProvider: 'AZURE_OPENAI'
   }
 }
 

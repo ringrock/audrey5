@@ -8,8 +8,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Line endings**: Be aware of CRLF (Windows) vs LF (Unix) differences
 - **Scripts**: Prefer `.cmd` or PowerShell scripts for Windows, but can use bash scripts in WSL
 
+## LLM Provider Configuration
+
+The application supports multiple LLM providers that can be configured via environment variables:
+
+### Available Providers
+- `AZURE_OPENAI`: Azure OpenAI service (default)
+- `CLAUDE`: Anthropic Claude AI
+- `OPENAI_DIRECT`: Direct OpenAI API access
+
+### Configuration Variables
+```env
+# Default provider
+LLM_PROVIDER=AZURE_OPENAI
+
+# Providers available in UI (comma-separated)
+AVAILABLE_LLM_PROVIDERS=AZURE_OPENAI,CLAUDE,OPENAI_DIRECT
+```
+
+### Provider-Specific Settings
+```env
+# Azure OpenAI
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_KEY=your_key
+AZURE_OPENAI_MODEL=gpt-4
+
+# Claude
+CLAUDE_API_KEY=your_claude_key
+CLAUDE_MODEL=claude-3-opus-20240229
+
+# OpenAI Direct
+OPENAI_DIRECT_API_KEY=your_openai_key
+OPENAI_DIRECT_MODEL=gpt-4
+```
+
 ## Operational Guidelines
 - ATTENTION : toutes les modifications que tu fais pour faire fonctionner un LLM ne doivent pas casser le bon fonctionnement des autres LLM supportés par le module
+- Ne modifie jamais des paramètres directement dans le code si ils sont présent dans un fichier de conf comme le .env
 
 ## Build Commands
 

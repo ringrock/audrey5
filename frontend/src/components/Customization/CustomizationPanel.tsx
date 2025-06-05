@@ -19,7 +19,7 @@ import styles from './CustomizationPanel.module.css'
 export interface CustomizationPreferences {
   responseSize: 'veryShort' | 'medium' | 'comprehensive';
   documentsCount: number;
-  llmProvider?: 'AZURE_OPENAI' | 'CLAUDE';
+  llmProvider?: string;
 }
 
 export function CustomizationPanel() {
@@ -38,7 +38,7 @@ export function CustomizationPanel() {
     appStateContext?.state.customizationPreferences?.documentsCount || 5
   )
   
-  const [llmProvider, setLlmProvider] = useState<'AZURE_OPENAI' | 'CLAUDE'>(
+  const [llmProvider, setLlmProvider] = useState<string>(
     appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI'
   )
   
@@ -51,17 +51,20 @@ export function CustomizationPanel() {
     { key: 'comprehensive', text: currentLanguage === 'FR' ? 'Très complète' : 'Comprehensive' }
   ]
   
-  // Options pour le choix du provider LLM (uniquement en mode dev)
-  const llmProviderOptions: IChoiceGroupOption[] = [
-    { key: 'AZURE_OPENAI', text: 'Azure OpenAI' },
-    { key: 'CLAUDE', text: 'Claude AI' }
-  ]
+  // Récupérer la liste des providers disponibles depuis les settings frontend
+  const availableProviders = appStateContext?.state.frontendSettings?.available_llm_providers || ['AZURE_OPENAI']
+  
+  // Options pour le choix du provider LLM (basées sur la configuration backend)
+  const llmProviderOptions: IChoiceGroupOption[] = availableProviders.map(provider => ({
+    key: provider,
+    text: provider
+  }))
   
   // Déterminer si on est en mode développement
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   
   // Fonction pour mettre à jour les préférences
-  const updatePreferences = (newResponseSize?: 'veryShort' | 'medium' | 'comprehensive', newDocumentsCount?: number, newLlmProvider?: 'AZURE_OPENAI' | 'CLAUDE') => {
+  const updatePreferences = (newResponseSize?: 'veryShort' | 'medium' | 'comprehensive', newDocumentsCount?: number, newLlmProvider?: string) => {
     const updatedPreferences: CustomizationPreferences = {
       responseSize: newResponseSize || responseSize,
       documentsCount: newDocumentsCount !== undefined ? newDocumentsCount : documentsCount,
@@ -88,7 +91,7 @@ export function CustomizationPanel() {
   
   const handleLlmProviderChange = (_: React.FormEvent<HTMLElement | HTMLInputElement> | undefined, option?: IChoiceGroupOption) => {
     if (option) {
-      const newValue = option.key as 'AZURE_OPENAI' | 'CLAUDE'
+      const newValue = option.key as string
       setLlmProvider(newValue)
       updatePreferences(undefined, undefined, newValue)
     }
@@ -115,16 +118,17 @@ export function CustomizationPanel() {
   
   // Réinitialiser les paramètres par défaut
   const resetToDefaults = () => {
+    const defaultProvider = availableProviders[0] || 'AZURE_OPENAI'
     const defaultPreferences: CustomizationPreferences = {
       responseSize: 'medium',
       documentsCount: 5,
-      llmProvider: 'AZURE_OPENAI'
+      llmProvider: defaultProvider
     }
     
     // Mettre à jour l'état local
     setResponseSize('medium')
     setDocumentsCount(5)
-    setLlmProvider('AZURE_OPENAI')
+    setLlmProvider(defaultProvider)
     
     // Mettre à jour l'état global
     appStateContext?.dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: defaultPreferences })

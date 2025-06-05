@@ -10,6 +10,9 @@ export async function conversationApi(
   userFullDefinition: string,
   customizationPreferences?: any
 ): Promise<Response> {
+  // Debug logging pour vérifier la transmission du provider
+  console.log('conversationApi: Selected provider =', customizationPreferences?.llmProvider);
+  
   const response = await fetch('/conversation', {
     method: 'POST',
     headers: {
@@ -169,18 +172,23 @@ export const historyGenerate = async (
   convId?: string,
 ): Promise<Response> => {
   let body
+  // Debug logging pour vérifier la transmission du provider
+  console.log('historyGenerate: Selected provider =', customizationPreferences?.llmProvider);
+  
   if (convId) {
     body = JSON.stringify({
       conversation_id: convId,
       messages: options.messages,
       userFullDefinition: userFullDefinition,
-      customizationPreferences: customizationPreferences
+      customizationPreferences: customizationPreferences,
+      provider: customizationPreferences?.llmProvider
     })
   } else {
     body = JSON.stringify({
       messages: options.messages,
       userFullDefinition: userFullDefinition,
-      customizationPreferences: customizationPreferences
+      customizationPreferences: customizationPreferences,
+      provider: customizationPreferences?.llmProvider
     })
   }
   const response = await fetch('/history/generate', {

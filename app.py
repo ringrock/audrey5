@@ -118,6 +118,7 @@ frontend_settings = {
     },
     "sanitize_answer": app_settings.base_settings.sanitize_answer,
     "oyd_enabled": app_settings.base_settings.datasource_type,
+    "available_llm_providers": app_settings.base_settings.available_llm_providers,
 }
 
 
@@ -472,8 +473,19 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
             
     request_body['messages'] = filtered_messages
     
-    # Get provider from request or use default
-    provider_type = request_body.get("provider", LLMProviderFactory.get_default_provider())
+    # Get provider from request or customizationPreferences, fallback to default
+    provider_type = request_body.get("provider")
+    
+    # If provider not directly specified, check customizationPreferences
+    if not provider_type:
+        customization_preferences = request_body.get("customizationPreferences", {})
+        provider_type = customization_preferences.get("llmProvider")
+    
+    # Fallback to default if still not found
+    if not provider_type:
+        provider_type = LLMProviderFactory.get_default_provider()
+    
+    logging.debug(f"send_chat_request: Using provider = {provider_type}")
     
     # For backward compatibility with Azure OpenAI specific features
     if provider_type == "AZURE_OPENAI":
@@ -492,8 +504,9 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
         try:
             provider = LLMProviderFactory.create_provider(provider_type)
             
-            # Extract necessary parameters from model_args
-            model_args = prepare_model_args(request_body, request_headers, shouldStream)
+            # Extract messages directly for non-Azure providers (they handle their own model args)
+            request_messages = request_body.get("messages", [])
+            messages = [{"role": msg["role"], "content": msg["content"]} for msg in request_messages]
             
             # Send request to provider
             logging.debug(f"Sending request to {provider_type} with shouldStream={shouldStream}")
@@ -514,26 +527,15 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
                 user_permissions = user_full_definition
                 logging.debug(f"Setting user_permissions for Claude: {user_permissions}")
             
-            raw_response, apim_request_id = await provider.send_request(
-                messages=model_args["messages"],
+            response, apim_request_id = await provider.send_request(
+                messages=messages,
                 stream=shouldStream,
-                temperature=model_args.get("temperature"),
-                max_tokens=model_args.get("max_tokens"),
-                top_p=model_args.get("top_p"),
-                stop=model_args.get("stop"),
-                user=model_args.get("user"),
-                model=model_args.get("model"),
                 documents_count=documents_count,
                 search_filters=search_filters,
                 user_permissions=user_permissions
             )
             
-            logging.debug(f"Raw response from {provider_type}: {type(raw_response)} - {str(raw_response)[:200]}...")
-            
-            # Format response to match Azure OpenAI format
-            response = provider.format_response(raw_response, stream=shouldStream)
-            
-            logging.debug(f"Formatted response: {type(response)} - {str(response)[:200]}...")
+            logging.debug(f"Response from {provider_type}: {type(response)} - {str(response)[:200]}...")
             
             return response, apim_request_id
         except Exception as e:
@@ -636,8 +638,19 @@ async def process_function_call_stream(completionChunk, function_call_stream_sta
 
 
 async def stream_chat_request(request_body, request_headers):
-    # Get provider from request or use default
-    provider_type = request_body.get("provider", LLMProviderFactory.get_default_provider())
+    # Get provider from request or customizationPreferences, fallback to default
+    provider_type = request_body.get("provider")
+    
+    # If provider not directly specified, check customizationPreferences
+    if not provider_type:
+        customization_preferences = request_body.get("customizationPreferences", {})
+        provider_type = customization_preferences.get("llmProvider")
+    
+    # Fallback to default if still not found
+    if not provider_type:
+        provider_type = LLMProviderFactory.get_default_provider()
+    
+    logging.debug(f"stream_chat_request: Using provider = {provider_type}")
     
     # Enable streaming for both providers
     shouldStream = True
@@ -903,6 +916,11 @@ async def add_conversation():
         # Submit request to Chat Completions for response
         # Use the already parsed request_json instead of parsing again
         request_json["history_metadata"] = history_metadata
+        
+        # Debug logging pour vérifier la transmission du provider
+        logging.debug(f"history/generate: provider in request = {request_json.get('provider', 'Not specified')}")
+        logging.debug(f"history/generate: customizationPreferences = {request_json.get('customizationPreferences', 'None')}")
+        
         return await conversation_internal(request_json, request.headers)
 
     except Exception as e:

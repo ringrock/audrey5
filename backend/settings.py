@@ -864,6 +864,15 @@ class _BaseSettings(BaseSettings):
     sanitize_answer: bool = False
     use_promptflow: bool = False
     llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, or OPENAI_DIRECT
+    available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT"]  # List of providers to expose in UI
+    
+    @field_validator('available_llm_providers', mode='before')
+    @classmethod
+    def split_providers(cls, comma_separated_string: str) -> List[str]:
+        if isinstance(comma_separated_string, str) and len(comma_separated_string) > 0:
+            return parse_multi_columns(comma_separated_string)
+        
+        return ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT"]
 
 
 class _AppSettings(BaseModel):
