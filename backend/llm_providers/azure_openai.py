@@ -9,6 +9,8 @@ Key features:
 - Azure AD authentication support
 - Managed identity integration
 - Full compatibility with existing Azure OpenAI configurations
+- Azure Search integration via "On Your Data" (data_sources)
+- Automatic documents_count parameter handling
 - Minimal overhead since responses are already in standard format
 """
 
@@ -35,6 +37,9 @@ class AzureOpenAIProvider(LLMProvider):
     - Supports both API key and Azure AD authentication
     - Handles managed identity scenarios
     - Maintains full compatibility with existing configurations
+    - Azure Search integration via "On Your Data" (automatic data_sources construction)
+    - Documents count parameter support via top_n_documents
+    - User permissions filtering support
     - Supports all Azure OpenAI parameters (temperature, max_tokens, etc.)
     """
     
@@ -109,11 +114,19 @@ class AzureOpenAIProvider(LLMProvider):
         await self.init_client()
         
         try:
+            # Apply response size customization using centralized methods
+            response_size = kwargs.get("response_size", "medium")
+            base_max_tokens = kwargs.get("max_tokens", app_settings.azure_openai.max_tokens)
+            adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
+            
+            # Enhance system message with response size instructions
+            enhanced_messages = self._enhance_messages_with_response_size(messages, response_size)
+            
             # Build request parameters with defaults from settings
             model_args = {
-                "messages": messages,
+                "messages": enhanced_messages,
                 "temperature": kwargs.get("temperature", app_settings.azure_openai.temperature),
-                "max_tokens": kwargs.get("max_tokens", app_settings.azure_openai.max_tokens),
+                "max_tokens": adjusted_max_tokens,
                 "top_p": kwargs.get("top_p", app_settings.azure_openai.top_p),
                 "stop": kwargs.get("stop", app_settings.azure_openai.stop_sequence),
                 "stream": stream,
@@ -121,11 +134,19 @@ class AzureOpenAIProvider(LLMProvider):
                 "user": kwargs.get("user"),
             }
             
+            # Add Azure Search integration via data_sources (Azure OpenAI "On Your Data")
+            extra_body = self._build_azure_search_extra_body(**kwargs)
+            if extra_body:
+                model_args["extra_body"] = extra_body
+                self.logger.debug("Added Azure Search data_sources to request")
+            
             # Add optional parameters if provided
             if "tools" in kwargs:
                 model_args["tools"] = kwargs["tools"]
+            # Manual extra_body parameter overrides automatic data_sources
             if "extra_body" in kwargs:
                 model_args["extra_body"] = kwargs["extra_body"]
+                self.logger.debug("Using manual extra_body parameter")
             
             self.logger.debug(f"Sending request to Azure OpenAI: stream={stream}, model={model_args['model']}")
             
@@ -177,6 +198,55 @@ class AzureOpenAIProvider(LLMProvider):
             # but we create a StandardResponse for consistency
             standard_response = self._convert_azure_response(response)
             return StandardResponseAdapter(standard_response)
+    
+    def _build_azure_search_extra_body(self, **kwargs) -> Optional[Dict[str, Any]]:
+        """
+        Build extra_body with data_sources configuration for Azure OpenAI "On Your Data".
+        
+        This method constructs the data_sources payload that enables Azure OpenAI's
+        native integration with Azure Search, similar to the original implementation.
+        
+        Args:
+            **kwargs: Request parameters including documents_count, search_filters, user_permissions
+            
+        Returns:
+            Dictionary with data_sources configuration, or None if no datasource configured
+        """
+        # Skip if no datasource configured
+        if not app_settings.datasource:
+            self.logger.debug("No datasource configured - skipping Azure Search integration")
+            return None
+        
+        try:
+            # Prepare parameters for construct_payload_configuration
+            config_kwargs = {}
+            
+            # Pass documents_count if specified
+            if kwargs.get("documents_count") is not None:
+                config_kwargs["documents_count"] = kwargs["documents_count"]
+            
+            # Pass user permissions as fullDefinition for filtering
+            if kwargs.get("user_permissions") is not None:
+                config_kwargs["fullDefinition"] = kwargs["user_permissions"]
+            
+            # Use the datasource's construct_payload_configuration method
+            # The methods expect documents_count and fullDefinition as kwargs
+            datasource_config = app_settings.datasource.construct_payload_configuration(
+                **config_kwargs
+            )
+            
+            # Build the extra_body with data_sources
+            extra_body = {
+                "data_sources": [datasource_config]
+            }
+            
+            self.logger.debug(f"Built Azure Search data_sources configuration with top_k={kwargs.get('documents_count', 'default')}")
+            return extra_body
+            
+        except Exception as e:
+            self.logger.error(f"Failed to build Azure Search extra_body: {e}")
+            # Return None to continue without Azure Search rather than failing the request
+            return None
     
     def _convert_azure_response(self, azure_response) -> StandardResponse:
         """

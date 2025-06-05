@@ -253,146 +253,6 @@ async def init_cosmosdb_client():
     return cosmos_conversation_client
 
 
-def prepare_model_args(request_body, request_headers, shouldStream = True):
-    request_messages = request_body.get("messages", [])
-    messages = []
-    
-    # Récupérer les préférences de personnalisation si elles existent
-    customization_preferences = request_body.get("customizationPreferences", None)
-    
-    # Base system message
-    system_message = app_settings.azure_openai.system_message
-    
-    # Modifier le message système en fonction des préférences de taille de réponse
-    if customization_preferences and "responseSize" in customization_preferences:
-        response_size = customization_preferences["responseSize"]
-        
-        if response_size == "veryShort":
-            system_message += " Fournissez des réponses très courtes et concises. Allez droit au but sans détails superflus."
-        elif response_size == "comprehensive":
-            system_message += " Fournissez des réponses détaillées et complètes. Incluez autant de contexte et d'informations pertinentes que possible."
-        # Pour 'medium', on garde le message système par défaut
-    
-    # Ajouter le message système modifié
-    if not app_settings.datasource:
-        messages = [
-            {
-                "role": "system",
-                "content": system_message
-            }
-        ]
-    else:
-        # Modifier également le role_information pour les datasources
-        search_copy = copy.deepcopy(app_settings.search)
-        search_copy.role_information = system_message
-        
-        # Mettre à jour l'objet app_settings avec la version modifiée temporairement
-        app_settings_copy = copy.deepcopy(app_settings)
-        app_settings_copy.search = search_copy
-
-    for message in request_messages:
-        if message:
-            match message["role"]:
-                case "user":
-                    messages.append(
-                        {
-                            "role": message["role"],
-                            "content": message["content"]
-                        }
-                    )
-                case "assistant" | "function" | "tool":
-                    messages_helper = {}
-                    messages_helper["role"] = message["role"]
-                    if "name" in message:
-                        messages_helper["name"] = message["name"]
-                    if "function_call" in message:
-                        messages_helper["function_call"] = message["function_call"]
-                    messages_helper["content"] = message["content"]
-                    if "context" in message:
-                        context_obj = json.loads(message["context"])
-                        messages_helper["context"] = context_obj
-                    
-                    messages.append(messages_helper)
-
-
-    user_json = None
-    if (MS_DEFENDER_ENABLED):
-        authenticated_user_details = get_authenticated_user_details(request_headers)
-        conversation_id = request_body.get("conversation_id", None)
-        application_name = app_settings.ui.title
-        user_json = get_msdefender_user_json(authenticated_user_details, request_headers, conversation_id, application_name)
-
-    model_args = {
-        "messages": messages,
-        "temperature": app_settings.azure_openai.temperature,
-        "max_tokens": app_settings.azure_openai.max_tokens,
-        "top_p": app_settings.azure_openai.top_p,
-        "stop": app_settings.azure_openai.stop_sequence,
-        "stream": shouldStream,
-        "model": app_settings.azure_openai.model,
-        "user": user_json
-    }
-
-    # Ajout des outils et datasources si nécessaire
-    if len(messages) > 0 and messages[-1]["role"] == "user":
-        if app_settings.azure_openai.function_call_azure_functions_enabled and len(azure_openai_tools) > 0:
-            model_args["tools"] = azure_openai_tools
-
-        if app_settings.datasource:
-            # Obtenir le nombre de documents depuis les préférences
-            documents_count = None
-            if customization_preferences and "documentsCount" in customization_preferences:
-                documents_count = customization_preferences["documentsCount"]
-            
-            # Utiliser app_settings_copy pour les datasources si disponible
-            datasource_settings = app_settings_copy.datasource if 'app_settings_copy' in locals() else app_settings.datasource
-                
-            model_args["extra_body"] = {
-                "data_sources": [
-                    datasource_settings.construct_payload_configuration(
-                        fullDefinition=request_body.get("userFullDefinition", "*"),
-                        documents_count=documents_count
-                    )
-                ]
-            }
-
-    model_args_clean = copy.deepcopy(model_args)
-    if model_args_clean.get("extra_body"):
-        secret_params = [
-            "key",
-            "connection_string",
-            "embedding_key",
-            "encoded_api_key",
-            "api_key",
-        ]
-        for secret_param in secret_params:
-            if model_args_clean["extra_body"]["data_sources"][0]["parameters"].get(
-                secret_param
-            ):
-                model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                    secret_param
-                ] = "*****"
-        authentication = model_args_clean["extra_body"]["data_sources"][0][
-            "parameters"
-        ].get("authentication", {})
-        for field in authentication:
-            if field in secret_params:
-                model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                    "authentication"
-                ][field] = "*****"
-        embeddingDependency = model_args_clean["extra_body"]["data_sources"][0][
-            "parameters"
-        ].get("embedding_dependency", {})
-        if "authentication" in embeddingDependency:
-            for field in embeddingDependency["authentication"]:
-                if field in secret_params:
-                    model_args_clean["extra_body"]["data_sources"][0]["parameters"][
-                        "embedding_dependency"
-                    ]["authentication"][field] = "*****"
-
-    logging.debug(f"REQUEST BODY: {json.dumps(model_args_clean, indent=4)}")
-
-    return model_args
 
 async def promptflow_request(request):
     try:
@@ -487,60 +347,47 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
     
     logging.debug(f"send_chat_request: Using provider = {provider_type}")
     
-    # For backward compatibility with Azure OpenAI specific features
-    if provider_type == "AZURE_OPENAI":
-        model_args = prepare_model_args(request_body, request_headers, shouldStream)
-        try:
-            azure_openai_client = await init_openai_client()
-            raw_response = await azure_openai_client.chat.completions.with_raw_response.create(**model_args)
-            response = raw_response.parse()
-            apim_request_id = raw_response.headers.get("apim-request-id") 
-        except Exception as e:
-            logging.exception("Exception in send_chat_request")
-            raise e
+    # Use the unified LLM provider abstraction for ALL providers
+    try:
+        provider = LLMProviderFactory.create_provider(provider_type)
+        
+        # Extract messages for all providers (they handle their own model args)
+        request_messages = request_body.get("messages", [])
+        messages = [{"role": msg["role"], "content": msg["content"]} for msg in request_messages]
+        
+        # Send request to provider
+        logging.debug(f"Sending request to {provider_type} with shouldStream={shouldStream}")
+        
+        # Extract customization preferences
+        customization_preferences = request_body.get("customizationPreferences", {})
+        documents_count = customization_preferences.get("documentsCount")
+        response_size = customization_preferences.get("responseSize", "medium")
+        
+        # Extract search filters and user permissions properly
+        user_full_definition = request_body.get("userFullDefinition", "*")
+        search_filters = None
+        user_permissions = None
+        
+        if user_full_definition and user_full_definition != "*":
+            # For Claude, we need to pass this as user permissions for rights management
+            user_permissions = user_full_definition
+            logging.debug(f"Setting user_permissions for {provider_type}: {user_permissions}")
+        
+        response, apim_request_id = await provider.send_request(
+            messages=messages,
+            stream=shouldStream,
+            documents_count=documents_count,
+            response_size=response_size,
+            search_filters=search_filters,
+            user_permissions=user_permissions
+        )
+        
+        logging.debug(f"Response from {provider_type}: {type(response)} - {str(response)[:200]}...")
+        
         return response, apim_request_id
-    else:
-        # Use the new LLM provider abstraction
-        try:
-            provider = LLMProviderFactory.create_provider(provider_type)
-            
-            # Extract messages directly for non-Azure providers (they handle their own model args)
-            request_messages = request_body.get("messages", [])
-            messages = [{"role": msg["role"], "content": msg["content"]} for msg in request_messages]
-            
-            # Send request to provider
-            logging.debug(f"Sending request to {provider_type} with shouldStream={shouldStream}")
-            
-            # Extract documents_count for Claude Azure Search integration
-            documents_count = None
-            customization_preferences = request_body.get("customizationPreferences")
-            if customization_preferences and "documentsCount" in customization_preferences:
-                documents_count = customization_preferences["documentsCount"]
-            
-            # Extract search filters and user permissions properly
-            user_full_definition = request_body.get("userFullDefinition", "*")
-            search_filters = None
-            user_permissions = None
-            
-            if user_full_definition and user_full_definition != "*":
-                # For Claude, we need to pass this as user permissions for rights management
-                user_permissions = user_full_definition
-                logging.debug(f"Setting user_permissions for Claude: {user_permissions}")
-            
-            response, apim_request_id = await provider.send_request(
-                messages=messages,
-                stream=shouldStream,
-                documents_count=documents_count,
-                search_filters=search_filters,
-                user_permissions=user_permissions
-            )
-            
-            logging.debug(f"Response from {provider_type}: {type(response)} - {str(response)[:200]}...")
-            
-            return response, apim_request_id
-        except Exception as e:
-            logging.exception(f"Exception in send_chat_request with provider {provider_type}")
-            raise e
+    except Exception as e:
+        logging.exception(f"Exception in send_chat_request with provider {provider_type}")
+        raise e
 
 
 async def complete_chat_request(request_body, request_headers):

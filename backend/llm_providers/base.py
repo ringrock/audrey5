@@ -39,6 +39,84 @@ class LLMProvider(ABC):
         self.initialized = False
         self.logger = logging.getLogger(self.__class__.__name__)
     
+    def _adjust_max_tokens_for_response_size(self, base_max_tokens: int, response_size: str) -> int:
+        """
+        Adjust max_tokens based on response size preference.
+        
+        Args:
+            base_max_tokens: Base max tokens value
+            response_size: Response size preference (veryShort, medium, comprehensive)
+            
+        Returns:
+            Adjusted max_tokens value
+        """
+        if response_size == "veryShort":
+            return min(base_max_tokens, 300)  # Allow enough tokens for complete short sentences
+        elif response_size == "comprehensive":
+            return max(base_max_tokens, 2000)  # Allow longer responses
+        else:
+            return base_max_tokens
+    
+    def _build_response_size_instructions(self, base_message: str, response_size: str) -> str:
+        """
+        Add response size instructions to system message.
+        
+        Args:
+            base_message: Base system message
+            response_size: Response size preference (veryShort, medium, comprehensive)
+            
+        Returns:
+            Enhanced system message with size instructions
+        """
+        if response_size == "veryShort":
+            return base_message + " IMPORTANT: Répondez de manière très concise en 1-2 phrases complètes maximum. Terminez votre réponse par un point final quand vous avez donné l'essentiel."
+        elif response_size == "comprehensive":
+            return base_message + " IMPORTANT: Fournissez des réponses détaillées et complètes avec des explications approfondies, des exemples et du contexte supplémentaire."
+        else:
+            return base_message
+    
+    def _enhance_messages_with_response_size(self, messages: List[Dict[str, Any]], response_size: str) -> List[Dict[str, Any]]:
+        """
+        Enhance messages with response size instructions (for OpenAI format).
+        
+        Args:
+            messages: Messages in OpenAI format
+            response_size: Response size preference (veryShort, medium, comprehensive)
+            
+        Returns:
+            Enhanced messages with response size system message
+        """
+        if response_size == "medium":
+            return messages
+            
+        enhanced_messages = messages.copy()
+        
+        # Look for existing system message or create one
+        system_message_idx = None
+        from backend.settings import app_settings
+        base_system_message = getattr(app_settings.azure_openai, 'system_message', "You are an AI assistant that helps people find information.")
+        
+        for i, msg in enumerate(enhanced_messages):
+            if msg.get("role") == "system":
+                system_message_idx = i
+                base_system_message = msg["content"]
+                break
+        
+        # Create enhanced system message
+        enhanced_system_message = self._build_response_size_instructions(base_system_message, response_size)
+        
+        if system_message_idx is not None:
+            # Update existing system message
+            enhanced_messages[system_message_idx]["content"] = enhanced_system_message
+        else:
+            # Insert new system message at the beginning
+            enhanced_messages.insert(0, {
+                "role": "system",
+                "content": enhanced_system_message
+            })
+        
+        return enhanced_messages
+    
     @abstractmethod
     async def init_client(self):
         """

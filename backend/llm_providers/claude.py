@@ -105,11 +105,16 @@ class ClaudeProvider(LLMProvider):
             # Perform Azure Search if configured and inject context
             claude_messages = await self._enhance_with_search_context(claude_messages, **kwargs)
             
+            # Use centralized max_tokens adjustment
+            response_size = kwargs.get("response_size", "medium")
+            base_max_tokens = kwargs.get("max_tokens", app_settings.claude.max_tokens)
+            adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
+            
             # Build Claude API request
             request_body = {
                 "model": self.model,
                 "messages": claude_messages,
-                "max_tokens": kwargs.get("max_tokens", app_settings.claude.max_tokens),
+                "max_tokens": adjusted_max_tokens,
                 "temperature": kwargs.get("temperature", app_settings.claude.temperature),
                 "stream": stream
             }
@@ -182,10 +187,10 @@ class ClaudeProvider(LLMProvider):
         Returns:
             Enhanced messages with search context injected
         """
-        # Skip search if no datasource configured
+        # Skip search if no datasource configured, but still apply response size
         if not app_settings.datasource:
             self.logger.warning("No Azure Search datasource configured - Claude will respond without search context")
-            return claude_messages
+            return self._apply_response_size_only(claude_messages, kwargs.get("response_size", "medium"))
         
         if not claude_messages:
             self.logger.warning("No messages to enhance with search context")
@@ -214,7 +219,8 @@ class ClaudeProvider(LLMProvider):
             return claude_messages
         
         # Inject search context into messages
-        return self._inject_search_context(claude_messages, search_results)
+        response_size = kwargs.get("response_size", "medium")
+        return self._inject_search_context(claude_messages, search_results, response_size)
     
     def _convert_messages_to_claude_format(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -251,6 +257,45 @@ class ClaudeProvider(LLMProvider):
         
         return claude_messages
     
+    def _apply_response_size_only(
+        self, 
+        claude_messages: List[Dict[str, Any]], 
+        response_size: str = "medium"
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply response size preference to messages without search context.
+        
+        Args:
+            claude_messages: Messages in Claude format
+            response_size: Response size preference (veryShort, medium, comprehensive)
+            
+        Returns:
+            Enhanced messages with response size instructions
+        """
+        if response_size == "medium":
+            # No modification needed for default size
+            return claude_messages
+        
+        # Apply response size instructions for non-medium sizes
+        updated_messages = claude_messages.copy()
+        base_system_message = app_settings.claude.system_message
+        enhanced_system_message = self._build_response_size_instructions(base_system_message, response_size)
+        
+        # Update the first user message to include the enhanced system message
+        if updated_messages and updated_messages[0].get("role") == "user":
+            original_content = updated_messages[0]['content']
+            enhanced_content = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {original_content}"
+            updated_messages[0]["content"] = enhanced_content
+        else:
+            # If no user message, prepend as a system instruction
+            enhanced_content = f"{enhanced_system_message}\n\nVeuillez m'aider avec la question suivante."
+            updated_messages.insert(0, {
+                "role": "user",
+                "content": enhanced_content
+            })
+        
+        return updated_messages
+    
     def _extract_user_query(self, claude_messages: List[Dict[str, Any]]) -> Optional[str]:
         """
         Extract the user's query from Claude messages for search.
@@ -270,7 +315,8 @@ class ClaudeProvider(LLMProvider):
     def _inject_search_context(
         self, 
         claude_messages: List[Dict[str, Any]], 
-        search_results: List[Dict[str, Any]]
+        search_results: List[Dict[str, Any]],
+        response_size: str = "medium"
     ) -> List[Dict[str, Any]]:
         """
         Inject Azure Search results into Claude message context.
@@ -292,9 +338,11 @@ class ClaudeProvider(LLMProvider):
         # Store citations for use in response formatting
         self._current_search_citations = citations
         
-        # Build enhanced system message with search context
+        # Build enhanced system message with search context and response size preference  
         base_system_message = app_settings.claude.system_message
-        enhanced_system_message = f"""{base_system_message}
+        system_with_size = self._build_response_size_instructions(base_system_message, response_size)
+        
+        enhanced_system_message = f"""{system_with_size}
 
 Documents disponibles :
 {search_context}"""
