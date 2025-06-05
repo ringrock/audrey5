@@ -815,6 +815,7 @@ class _ClaudeSettings(BaseSettings):
     max_tokens: int = 1000
     temperature: float = 0
     top_p: float = 1.0
+    system_message: str = "Tu es un assistant IA serviable et précis."
 
 
 class _CustomAvanteamSettings(BaseSettings):

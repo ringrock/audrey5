@@ -6,8 +6,167 @@ from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from openai import AsyncAzureOpenAI
 from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+from azure.search.documents.aio import SearchClient
+from azure.core.credentials import AzureKeyCredential
 
 from backend.settings import app_settings
+from backend.utils import generateFilterStringFromFullDef
+
+
+class AzureSearchService:
+    """Service to handle Azure Search queries for Claude"""
+    
+    def __init__(self):
+        self.search_client = None
+        self.initialized = False
+    
+    async def close(self):
+        """Close the search client and clean up resources"""
+        if self.search_client:
+            await self.search_client.close()
+            self.search_client = None
+            self.initialized = False
+    
+    
+    async def search_documents(self, query: str, top_k: int = None, filters: str = None, user_permissions: str = None) -> List[Dict[str, Any]]:
+        """Search for documents relevant to the query"""
+        # Create a new client for this request to avoid session leaks
+        search_client = None
+        
+        try:
+            # Get Azure Search settings
+            if not app_settings.datasource:
+                logging.warning("Azure Search not configured")
+                return []
+                
+            search_service = app_settings.datasource.service
+            search_index = app_settings.datasource.index
+            search_key = app_settings.datasource.key
+            
+            if not search_service or not search_index:
+                logging.warning("Azure Search not configured - search service or index missing")
+                return []
+                
+            # Build endpoint
+            endpoint = f"https://{search_service}.search.windows.net"
+            
+            # Create credentials
+            if search_key:
+                credential = AzureKeyCredential(search_key)
+            else:
+                # Use managed identity if no key provided
+                credential = DefaultAzureCredential()
+            
+            # Create search client for this request
+            search_client = SearchClient(
+                endpoint=endpoint,
+                index_name=search_index,
+                credential=credential
+            )
+            # Use top_k from parameters or default from settings
+            if top_k is None:
+                top_k = app_settings.datasource.top_k or 5
+            
+            # Build search parameters
+            search_params = {
+                "search_text": query,
+                "top": top_k,
+                "include_total_count": True
+            }
+            
+            # Build permission-based filter
+            permission_filter = None
+            if user_permissions and hasattr(app_settings.datasource, 'permitted_groups_column') and app_settings.datasource.permitted_groups_column:
+                try:
+                    permission_filter = generateFilterStringFromFullDef(user_permissions)
+                    logging.debug(f"Generated permission filter: {permission_filter}")
+                except Exception as e:
+                    logging.warning(f"Failed to generate permission filter: {e}")
+            
+            # Combine filters
+            combined_filter = None
+            if permission_filter and filters:
+                combined_filter = f"({permission_filter}) and ({filters})"
+            elif permission_filter:
+                combined_filter = permission_filter
+            elif filters:
+                combined_filter = filters
+            
+            # Add filter if provided
+            if combined_filter:
+                search_params["filter"] = combined_filter
+                logging.debug(f"Using combined filter: {combined_filter}")
+            
+            # Add semantic search if configured
+            if hasattr(app_settings.datasource, 'use_semantic_search') and app_settings.datasource.use_semantic_search:
+                if hasattr(app_settings.datasource, 'semantic_search_config') and app_settings.datasource.semantic_search_config:
+                    search_params["query_type"] = "semantic"
+                    search_params["semantic_configuration_name"] = app_settings.datasource.semantic_search_config
+            
+            logging.debug(f"Azure Search query: {query} with params: {search_params}")
+            
+            # Execute search
+            results = await search_client.search(**search_params)
+            
+            # Process results
+            documents = []
+            async for result in results:
+                # Extract content and metadata
+                doc = {
+                    "content": self._extract_content(result),
+                    "title": self._extract_field(result, app_settings.datasource.title_column),
+                    "url": self._extract_field(result, app_settings.datasource.url_column),
+                    "filename": self._extract_field(result, app_settings.datasource.filename_column),
+                    "score": result.get("@search.score", 0),
+                    "metadata": {
+                        "id": result.get("id", ""),
+                        "source": self._extract_field(result, app_settings.datasource.filename_column) or "Document"
+                    }
+                }
+                documents.append(doc)
+            
+            logging.debug(f"Azure Search returned {len(documents)} documents")
+            return documents
+            
+        except Exception as e:
+            logging.error(f"Azure Search query failed: {e}")
+            return []
+        finally:
+            # Always close the search client to prevent session leaks
+            if search_client:
+                try:
+                    await search_client.close()
+                except Exception as e:
+                    logging.warning(f"Error closing search client: {e}")
+    
+    def _extract_content(self, result: Dict[str, Any]) -> str:
+        """Extract content from search result"""
+        # Try different content fields
+        content_columns = app_settings.datasource.content_columns or ["content", "merged_content"]
+        
+        for column in content_columns:
+            if column in result:
+                content = result[column]
+                if isinstance(content, list):
+                    return " ".join(str(item) for item in content)
+                return str(content) if content else ""
+        
+        # Fallback to any text field
+        for key, value in result.items():
+            if isinstance(value, str) and len(value) > 50:  # Assume it's content if it's a long string
+                return value
+        
+        return ""
+    
+    def _extract_field(self, result: Dict[str, Any], field_name: Optional[str]) -> Optional[str]:
+        """Extract a specific field from search result"""
+        if not field_name or field_name not in result:
+            return None
+        
+        value = result[field_name]
+        if isinstance(value, list):
+            return " ".join(str(item) for item in value)
+        return str(value) if value else None
 
 
 class MockAzureOpenAIResponse:
@@ -38,7 +197,6 @@ class MockMessage:
         self.tool_calls = message_dict.get("tool_calls")  # None for Claude
         self.context = message_dict.get("context")  # None for Claude
         self.function_call = message_dict.get("function_call")  # None for Claude
-        logging.debug(f"MockMessage created with attributes: role={self.role}, content={self.content[:50] if self.content else None}, tool_calls={self.tool_calls}")
 
 
 class LLMProvider(ABC):
@@ -129,6 +287,7 @@ class ClaudeProvider(LLMProvider):
         self.model = None
         self.api_url = "https://api.anthropic.com/v1/messages"
         self.initialized = False
+        self.search_service = AzureSearchService()
     
     async def init_client(self):
         """Initialize Claude provider with settings"""
@@ -148,8 +307,48 @@ class ClaudeProvider(LLMProvider):
         """Send request to Claude API"""
         await self.init_client()
         
+        # Reset citation flags for new request
+        if hasattr(self, '_citations_sent'):
+            delattr(self, '_citations_sent')
+        if hasattr(self, '_current_search_citations'):
+            delattr(self, '_current_search_citations')
+        
         # Convert messages format from OpenAI to Claude
         claude_messages = self._convert_messages_to_claude_format(messages)
+        
+        # Perform Azure Search if datasource is configured
+        if app_settings.datasource:
+            logging.debug(f"Azure Search datasource is configured: {app_settings.datasource.service}/{app_settings.datasource.index}")
+            if len(claude_messages) > 0:
+                user_query = self._extract_user_query(claude_messages)
+                logging.debug(f"Extracted user query for search: '{user_query}'")
+                if user_query:
+                    # Get documents count from kwargs (passed from customization preferences)
+                    documents_count = kwargs.get("documents_count")
+                    search_filters = kwargs.get("search_filters")
+                    user_permissions = kwargs.get("user_permissions")
+                    
+                    # Search for relevant documents
+                    search_results = await self.search_service.search_documents(
+                        query=user_query,
+                        top_k=documents_count,
+                        filters=search_filters,
+                        user_permissions=kwargs.get("user_permissions")
+                    )
+                    
+                    
+                    
+                    # Inject search results into Claude messages
+                    if search_results:
+                        claude_messages = self._inject_search_context(claude_messages, search_results)
+                    else:
+                        logging.warning("No search results found, Claude will respond with native knowledge")
+                else:
+                    logging.warning("No user query extracted for search")
+            else:
+                logging.warning("No Claude messages to process for search")
+        else:
+            logging.debug("No Azure Search datasource configured")
         
         # Extract Claude-compatible parameters
         request_body = {
@@ -234,6 +433,75 @@ class ClaudeProvider(LLMProvider):
         
         return claude_messages
     
+    def _extract_user_query(self, claude_messages: List[Dict[str, Any]]) -> Optional[str]:
+        """Extract the user's query from Claude messages for search"""
+        # Get the last user message as the search query
+        for msg in reversed(claude_messages):
+            if msg.get("role") == "user":
+                return msg.get("content", "")
+        return None
+    
+    def _inject_search_context(self, claude_messages: List[Dict[str, Any]], search_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Inject Azure Search results into Claude message context"""
+        if not search_results:
+            return claude_messages
+        
+        # Build context from search results
+        context_parts = []
+        citations = []
+        
+        for i, doc in enumerate(search_results):
+            doc_id = i + 1
+            content = doc.get("content", "").strip()
+            title = doc.get("title", f"Document {doc_id}")
+            source = doc.get("filename", doc.get("metadata", {}).get("source", "Document"))
+            url = doc.get("url", "")
+            
+            if content:
+                # Add document to context
+                context_parts.append(f"[doc{doc_id}] {title}\n{content}")
+                
+                # Build citation
+                citation = {
+                    "id": f"doc{doc_id}",
+                    "title": title,
+                    "content": content[:200] + "..." if len(content) > 200 else content,
+                    "url": url,
+                    "filepath": source,
+                    "chunk_id": str(doc_id)
+                }
+                citations.append(citation)
+        
+        if not context_parts:
+            return claude_messages
+        
+        # Build the enhanced system message
+        search_context = "\n\n".join(context_parts)
+        
+        # Get system message from configuration
+        base_system_message = app_settings.claude.system_message
+        
+        enhanced_system_message = f"""{base_system_message}
+
+Documents disponibles :
+{search_context}"""
+
+        # Store citations for later use in response formatting
+        self._current_search_citations = citations
+        
+        # Update the first user message to include the enhanced system message
+        updated_messages = claude_messages.copy()
+        if updated_messages and updated_messages[0].get("role") == "user":
+            updated_messages[0]["content"] = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {updated_messages[0]['content']}"
+        else:
+            # If no user message, prepend as a system instruction
+            updated_messages.insert(0, {
+                "role": "user",
+                "content": f"{enhanced_system_message}\n\nVeuillez m'aider avec la question suivante."
+            })
+        
+        return updated_messages
+    
     async def _create_streaming_generator(self, request_body: Dict[str, Any], headers: Dict[str, str]) -> AsyncGenerator:
         """Create a streaming generator that manages its own HTTP client"""
         async with httpx.AsyncClient() as client:
@@ -252,6 +520,9 @@ class ClaudeProvider(LLMProvider):
     
     async def _stream_claude_response(self, response: httpx.Response) -> AsyncGenerator:
         """Convert Claude streaming response to OpenAI format"""
+        first_content_chunk = True
+        citations_sent = False
+        
         async for line in response.aiter_lines():
             line = line.strip()
             if line.startswith("data: "):
@@ -266,7 +537,21 @@ class ClaudeProvider(LLMProvider):
                     # Convert Claude chunk to OpenAI format based on event type
                     if chunk.get("type") == "content_block_delta":
                         # This contains the actual text content
-                        if chunk.get("delta", {}).get("text"):
+                        text_content = chunk.get("delta", {}).get("text")
+                        if text_content:
+                            if first_content_chunk:
+                                
+                                # Send citations in a separate chunk BEFORE the first content
+                                if (hasattr(self, '_current_search_citations') and 
+                                    self._current_search_citations and 
+                                    not citations_sent):
+                                    
+                                    citations_chunk = self._create_citations_chunk()
+                                    yield citations_chunk
+                                    citations_sent = True
+                                
+                                first_content_chunk = False
+                            
                             yield self._format_streaming_chunk(chunk)
                     elif chunk.get("type") == "content_block_start":
                         # Initial content block
@@ -283,8 +568,17 @@ class ClaudeProvider(LLMProvider):
                     logging.warning(f"Failed to parse Claude streaming data: {e}, data: {data}")
                     continue
     
-    def _format_streaming_chunk(self, claude_chunk: Dict[str, Any]) -> 'MockAzureOpenAIResponse':
-        """Format Claude streaming chunk to match OpenAI format"""
+    def _create_citations_chunk(self) -> 'MockAzureOpenAIResponse':
+        """Create a separate chunk for citations only"""
+        citations_context = {
+            "citations": self._current_search_citations,
+            "intent": "Azure Search results"
+        }
+        
+        delta_obj = {
+            "context": citations_context
+        }
+        
         chunk_dict = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
@@ -292,10 +586,28 @@ class ClaudeProvider(LLMProvider):
             "model": self.model,
             "choices": [{
                 "index": 0,
-                "delta": {
-                    "role": "assistant",
-                    "content": claude_chunk.get("delta", {}).get("text", "")
-                },
+                "delta": delta_obj,
+                "finish_reason": None
+            }]
+        }
+        
+        return MockAzureOpenAIResponse(chunk_dict)
+    
+    def _format_streaming_chunk(self, claude_chunk: Dict[str, Any]) -> 'MockAzureOpenAIResponse':
+        """Format Claude streaming chunk to match OpenAI format"""
+        delta_obj = {
+            "role": "assistant",
+            "content": claude_chunk.get("delta", {}).get("text", "")
+        }
+        
+        chunk_dict = {
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": self.model,
+            "choices": [{
+                "index": 0,
+                "delta": delta_obj,
                 "finish_reason": None
             }]
         }
@@ -324,6 +636,19 @@ class ClaudeProvider(LLMProvider):
             content = str(claude_response.get("content", ""))
         
         # For non-streaming responses, use 'message'
+        message_obj = {
+            "role": "assistant",
+            "content": content
+        }
+        
+        # Add context/citations if available from Azure Search
+        if hasattr(self, '_current_search_citations') and self._current_search_citations:
+            citations_context = {
+                "citations": self._current_search_citations,
+                "intent": "Azure Search results"
+            }
+            message_obj["context"] = citations_context
+        
         formatted_response = {
             "id": claude_response.get("id", f"chatcmpl-{int(time.time())}"),
             "object": "chat.completion",
@@ -331,10 +656,7 @@ class ClaudeProvider(LLMProvider):
             "model": claude_response.get("model", self.model),
             "choices": [{
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": content
-                },
+                "message": message_obj,
                 "finish_reason": claude_response.get("stop_reason", "stop")
             }],
             "usage": claude_response.get("usage", {

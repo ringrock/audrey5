@@ -497,6 +497,23 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
             
             # Send request to provider
             logging.debug(f"Sending request to {provider_type} with shouldStream={shouldStream}")
+            
+            # Extract documents_count for Claude Azure Search integration
+            documents_count = None
+            customization_preferences = request_body.get("customizationPreferences")
+            if customization_preferences and "documentsCount" in customization_preferences:
+                documents_count = customization_preferences["documentsCount"]
+            
+            # Extract search filters and user permissions properly
+            user_full_definition = request_body.get("userFullDefinition", "*")
+            search_filters = None
+            user_permissions = None
+            
+            if user_full_definition and user_full_definition != "*":
+                # For Claude, we need to pass this as user permissions for rights management
+                user_permissions = user_full_definition
+                logging.debug(f"Setting user_permissions for Claude: {user_permissions}")
+            
             raw_response, apim_request_id = await provider.send_request(
                 messages=model_args["messages"],
                 stream=shouldStream,
@@ -505,7 +522,10 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
                 top_p=model_args.get("top_p"),
                 stop=model_args.get("stop"),
                 user=model_args.get("user"),
-                model=model_args.get("model")
+                model=model_args.get("model"),
+                documents_count=documents_count,
+                search_filters=search_filters,
+                user_permissions=user_permissions
             )
             
             logging.debug(f"Raw response from {provider_type}: {type(raw_response)} - {str(raw_response)[:200]}...")
@@ -658,15 +678,7 @@ async def stream_chat_request(request_body, request_headers):
                 yield format_stream_response(response, history_metadata, apim_request_id)
             elif hasattr(response, 'id'):
                 # Response is a single completion object (MockAzureOpenAIResponse for Claude)
-                logging.error(f"DEBUG: Processing Claude single completion object: {type(response)}")
-                logging.error(f"DEBUG: Claude response.id: {response.id}")
-                logging.error(f"DEBUG: Claude response.choices: {len(response.choices) if response.choices else 0}")
-                if response.choices and len(response.choices) > 0:
-                    choice = response.choices[0]
-                    logging.error(f"DEBUG: Choice.delta.content: '{choice.delta.content if hasattr(choice, 'delta') else 'No delta'}'")
-                    logging.error(f"DEBUG: Choice.message.content: '{choice.message.content if hasattr(choice, 'message') else 'No message'}'")
                 formatted_response = format_stream_response(response, history_metadata, apim_request_id)
-                logging.error(f"DEBUG: format_stream_response returned: {formatted_response}")
                 yield formatted_response
             else:
                 # Response is a regular iterable (fallback)
@@ -833,7 +845,6 @@ async def check_tokens():
 ## Conversation History API ##
 @bp.route("/history/generate", methods=["POST"])
 async def add_conversation():
-    logging.error("DEBUG: /history/generate called!")
     if not(CheckAuthenticate(request)):
         return jsonify({"error": "Unauthorized"}), 401
     await cosmos_db_ready.wait()
@@ -892,8 +903,6 @@ async def add_conversation():
         # Submit request to Chat Completions for response
         # Use the already parsed request_json instead of parsing again
         request_json["history_metadata"] = history_metadata
-        logging.error(f"DEBUG: history/generate final history_metadata: {history_metadata}")
-        logging.error(f"DEBUG: history/generate conversation_id being passed: {conversation_id}")
         return await conversation_internal(request_json, request.headers)
 
     except Exception as e:
@@ -942,9 +951,6 @@ async def update_conversation():
                 logging.warning(f"Filtering out invalid message: {msg}")
         
         messages = valid_messages
-        logging.error(f"DEBUG: Valid messages after filtering: {len(messages)} messages")
-        for i, msg in enumerate(messages):
-            logging.error(f"DEBUG: Message {i}: role='{msg.get('role')}', content='{msg.get('content', '')[:50]}...'")
         
         if len(messages) > 0 and messages[-1]["role"] == "assistant":
             if len(messages) > 1 and messages[-2].get("role", None) == "tool":

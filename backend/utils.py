@@ -154,7 +154,6 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
                 response_obj["choices"][0]["messages"].append(messageObj)
                 return response_obj
             else:
-                logging.error(f"DEBUG: Checking delta.content for {chatCompletionChunk.id}: content='{delta.content}', has_content={bool(delta.content)}")
                 if delta.content:
                     messageObj = {
                         "role": "assistant",
@@ -163,10 +162,7 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
                         "date": f"{chatCompletionChunk.created}000"  # Timestamp en millisecondes
                     }
                     response_obj["choices"][0]["messages"].append(messageObj)
-                    logging.error(f"DEBUG: format_stream_response returning assistant message: {messageObj}")
                     return response_obj
-                else:
-                    logging.error(f"DEBUG: delta.content is empty/falsy for {chatCompletionChunk.id}")
 
     logging.warning(f"format_stream_response returning empty dict for: {chatCompletionChunk.id if hasattr(chatCompletionChunk, 'id') else 'unknown'}")
     return {}
