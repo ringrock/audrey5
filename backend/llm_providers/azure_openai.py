@@ -119,8 +119,17 @@ class AzureOpenAIProvider(LLMProvider):
             base_max_tokens = kwargs.get("max_tokens", app_settings.azure_openai.max_tokens)
             adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
             
-            # Enhance system message with response size instructions
-            enhanced_messages = self._enhance_messages_with_response_size(messages, response_size)
+            # For Azure OpenAI, we handle response size instructions differently:
+            # - If datasource is configured: inject into role_information (done in _build_azure_search_extra_body)
+            # - If no datasource: enhance system message normally
+            if app_settings.datasource:
+                # Don't enhance messages here - will be handled in datasource role_information
+                enhanced_messages = messages
+                self.logger.debug("Azure OpenAI with datasource: response size instructions will be in role_information")
+            else:
+                # No datasource - enhance system message normally
+                enhanced_messages = self._enhance_messages_with_response_size(messages, response_size)
+                self.logger.debug("Azure OpenAI without datasource: enhanced system message with response size instructions")
             
             # Build request parameters with defaults from settings
             model_args = {
@@ -234,6 +243,15 @@ class AzureOpenAIProvider(LLMProvider):
             datasource_config = app_settings.datasource.construct_payload_configuration(
                 **config_kwargs
             )
+            
+            # CRITICAL: Inject response size instructions into role_information for Azure OpenAI On Your Data
+            response_size = kwargs.get("response_size", "medium")
+            if response_size != "medium" and "parameters" in datasource_config:
+                base_role_info = datasource_config["parameters"].get("role_information", 
+                                                                   app_settings.azure_openai.system_message)
+                enhanced_role_info = self._build_response_size_instructions(base_role_info, response_size)
+                datasource_config["parameters"]["role_information"] = enhanced_role_info
+                self.logger.debug(f"Enhanced role_information with {response_size} instructions for Azure OpenAI")
             
             # Build the extra_body with data_sources
             extra_body = {
