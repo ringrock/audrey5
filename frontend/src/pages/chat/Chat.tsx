@@ -533,9 +533,14 @@ const Chat = () => {
               if (obj !== '' && obj !== '{}') {
                 runningText += obj
                 result = JSON.parse(runningText)
-                if (!result.choices?.[0]?.messages?.[0].content) {
-                  errorResponseMessage = NO_CONTENT_ERROR
-                  throw Error()
+                // Skip validation for chunks without content (citations, empty chunks, etc.)
+                // Only validate if there are messages but no content and no context
+                if (result.choices?.[0]?.messages?.length > 0) {
+                  const firstMessage = result.choices[0].messages[0]
+                  if (!firstMessage.content && !firstMessage.context && firstMessage.role !== "tool") {
+                    errorResponseMessage = NO_CONTENT_ERROR
+                    throw Error()
+                  }
                 }
                 if (result.choices?.length > 0) {
                   result.choices[0].messages.forEach(msg => {

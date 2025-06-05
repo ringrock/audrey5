@@ -7,9 +7,21 @@ enabling access to latest models and features.
 
 Key features:
 - Direct OpenAI API authentication
-- Support for latest OpenAI models
+- Support for latest OpenAI models (GPT-4o, GPT-3.5-turbo, etc.)
 - Full compatibility with OpenAI parameters
-- Minimal overhead with native OpenAI responses
+- Azure Search integration for RAG (Retrieval Augmented Generation)
+- Citation display with proper streaming support
+- Configurable via environment variables
+
+Azure Search Integration:
+- Automatically searches configured Azure Search index for relevant documents
+- Injects search context into system message for accurate responses
+- Generates proper citations for frontend display
+- Supports semantic and vector search
+
+Configuration:
+Set AZURE_SEARCH_CONTENT_COLUMNS=chunk in .env to ensure proper content extraction
+from vectorial indexes where text content is stored in the 'chunk' field.
 """
 
 import logging
@@ -21,6 +33,7 @@ from openai import AsyncOpenAI
 from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
+from .utils import AzureSearchService, build_search_context
 
 
 class OpenAIDirectProvider(LLMProvider):
@@ -42,6 +55,7 @@ class OpenAIDirectProvider(LLMProvider):
         """Initialize the OpenAI Direct provider."""
         super().__init__()
         self.client = None
+        self.search_service = AzureSearchService()
         self.logger = logging.getLogger("OpenAIDirectProvider")
     
     async def init_client(self):
@@ -63,11 +77,16 @@ class OpenAIDirectProvider(LLMProvider):
                 raise ValueError("OpenAI Direct API key not configured")
             
             # Initialize the OpenAI client
-            self.client = AsyncOpenAI(
-                api_key=app_settings.openai_direct.api_key,
-                # Use custom base URL if provided (for proxies, etc.)
-                base_url=getattr(app_settings.openai_direct, 'base_url', None)
-            )
+            base_url = getattr(app_settings.openai_direct, 'base_url', None)
+            
+            # Only use base_url if it's not empty
+            client_kwargs = {
+                "api_key": app_settings.openai_direct.api_key
+            }
+            if base_url and base_url.strip():
+                client_kwargs["base_url"] = base_url.strip()
+            
+            self.client = AsyncOpenAI(**client_kwargs)
             
             self.initialized = True
             self.logger.info("OpenAI Direct client initialized successfully")
@@ -99,9 +118,12 @@ class OpenAIDirectProvider(LLMProvider):
         await self.init_client()
         
         try:
+            # Convert OpenAI messages and enhance with Azure Search if configured
+            enhanced_messages = await self._enhance_with_search_context(messages, **kwargs)
+            
             # Build request parameters with defaults from settings
             model_args = {
-                "messages": messages,
+                "messages": enhanced_messages,
                 "temperature": kwargs.get("temperature", getattr(app_settings.openai_direct, 'temperature', 0.7)),
                 "max_tokens": kwargs.get("max_tokens", getattr(app_settings.openai_direct, 'max_tokens', 1000)),
                 "top_p": kwargs.get("top_p", getattr(app_settings.openai_direct, 'top_p', 1.0)),
@@ -128,6 +150,22 @@ class OpenAIDirectProvider(LLMProvider):
             
             # Make the request
             response = await self.client.chat.completions.create(**model_args)
+            
+            # Add citations to the response if we have search results
+            if hasattr(self, '_current_search_citations') and self._current_search_citations:
+                # For streaming responses, we need to inject citations
+                if stream:
+                    response = self._inject_citations_in_stream(response)
+                else:
+                    # For non-streaming, add citations to the message
+                    if hasattr(response, 'choices') and response.choices:
+                        choice = response.choices[0]
+                        if hasattr(choice, 'message'):
+                            # Add citations context to the message
+                            if not hasattr(choice.message, 'context'):
+                                choice.message.context = {}
+                            choice.message.context['citations'] = self._current_search_citations
+                            choice.message.context['intent'] = 'Azure Search results'
             
             # OpenAI Direct doesn't provide request IDs in the same way as Azure
             # We'll generate a simple identifier for consistency
@@ -238,6 +276,145 @@ class OpenAIDirectProvider(LLMProvider):
             usage=usage
         )
     
+    async def _enhance_with_search_context(
+        self, 
+        messages: List[Dict[str, Any]], 
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Enhance OpenAI messages with Azure Search context if configured.
+        
+        Args:
+            messages: Messages in OpenAI format
+            **kwargs: Additional parameters including search configuration
+            
+        Returns:
+            Enhanced messages with search context and system message
+        """
+        # Start with a copy of messages
+        enhanced_messages = messages.copy()
+        
+        # Add system message first
+        system_message = getattr(app_settings.openai_direct, 'system_message', 
+                                "Tu es un assistant IA serviable et précis.")
+        
+        # Check if we need to perform Azure Search
+        search_context = ""
+        citations = []
+        
+        if app_settings.datasource and enhanced_messages:
+            # Extract user query for search
+            user_query = self._extract_user_query(enhanced_messages)
+            if user_query:
+                self.logger.debug(f"Performing Azure Search for query: '{user_query}'")
+                
+                # Perform search
+                search_results = await self.search_service.search_documents(
+                    query=user_query,
+                    top_k=kwargs.get("documents_count"),
+                    filters=kwargs.get("search_filters"),
+                    user_permissions=kwargs.get("user_permissions")
+                )
+                
+                self.logger.debug(f"Azure Search returned {len(search_results) if search_results else 0} results")
+                
+                if search_results:
+                    # Build context and citations
+                    search_context, citations = build_search_context(search_results)
+                    self._current_search_citations = citations
+        
+        # Build enhanced system message
+        if search_context:
+            enhanced_system_message = f"""{system_message}
+
+Documents disponibles :
+{search_context}"""
+        else:
+            enhanced_system_message = system_message
+        
+        # Insert system message at the beginning
+        enhanced_messages.insert(0, {
+            "role": "system",
+            "content": enhanced_system_message
+        })
+        
+        return enhanced_messages
+    
+    def _extract_user_query(self, messages: List[Dict[str, Any]]) -> Optional[str]:
+        """Extract the user's query from messages for search"""
+        # Get the last user message as the search query
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                return msg.get("content", "")
+        return None
+    
+    def _inject_citations_in_stream(self, stream_response):
+        """
+        Inject citations into OpenAI streaming response.
+        
+        This creates a wrapper around the OpenAI stream that first yields
+        a citation chunk, then yields the actual content chunks.
+        
+        The citation chunk is structured to be compatible with the existing
+        format_stream_response function in backend/utils.py, using proper
+        class-based mock objects instead of SimpleNamespace to avoid timing issues.
+        """
+        import time
+        
+        async def citation_aware_stream():
+            first_chunk = True
+            async for chunk in stream_response:
+                # Before the first content chunk, inject citations
+                if first_chunk and hasattr(self, '_current_search_citations') and self._current_search_citations:
+                    # Create a citation chunk similar to Claude's format
+                    citation_chunk = {
+                        'id': f'openai-direct-citations-{int(time.time())}',
+                        'object': 'chat.completion.chunk',
+                        'created': int(time.time()),
+                        'model': getattr(app_settings.openai_direct, 'model', 'gpt-3.5-turbo'),
+                        'choices': [{
+                            'index': 0,
+                            'delta': {
+                                'role': 'assistant',
+                                'context': {
+                                    'citations': self._current_search_citations,
+                                    'intent': 'Azure Search results'
+                                }
+                            },
+                            'finish_reason': None
+                        }]
+                    }
+                    
+                    # Create a proper mock response object using the same pattern as OpenAI
+                    class MockCitationResponse:
+                        def __init__(self, chunk_data):
+                            self.id = chunk_data['id']
+                            self.object = chunk_data['object'] 
+                            self.created = chunk_data['created']
+                            self.model = chunk_data['model']
+                            self.choices = [MockChoice(chunk_data['choices'][0])]
+                    
+                    class MockChoice:
+                        def __init__(self, choice_data):
+                            self.index = choice_data['index']
+                            self.finish_reason = choice_data['finish_reason']
+                            self.delta = MockDelta(choice_data['delta'])
+                    
+                    class MockDelta:
+                        def __init__(self, delta_data):
+                            self.role = delta_data['role']
+                            self.context = delta_data['context']
+                    
+                    citation_response = MockCitationResponse(citation_chunk)
+                    
+                    yield citation_response
+                    first_chunk = False
+                
+                # Yield the actual content chunk
+                yield chunk
+        
+        return citation_aware_stream()
+    
     async def close(self):
         """Close the OpenAI Direct client and clean up resources."""
         await super().close()
@@ -246,3 +423,7 @@ class OpenAIDirectProvider(LLMProvider):
             await self.client.close()
             self.client = None
             self.logger.debug("OpenAI Direct client cleaned up")
+        
+        # Close search service
+        if self.search_service:
+            await self.search_service.close()

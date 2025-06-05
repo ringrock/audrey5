@@ -122,6 +122,7 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
         "history_metadata": history_metadata,
         "apim-request-id": apim_request_id,
     }
+    
 
     if len(chatCompletionChunk.choices) > 0:
         delta = chatCompletionChunk.choices[0].delta
@@ -163,6 +164,23 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
                     }
                     response_obj["choices"][0]["messages"].append(messageObj)
                     return response_obj
+                # Handle OpenAI Direct empty content chunks (role=assistant but no content)
+                elif hasattr(delta, 'role') and delta.role == 'assistant' and not hasattr(delta, 'context'):
+                    # Empty assistant chunk - return empty response to indicate chunk was handled
+                    return response_obj
+    
+    # Handle completely empty chunks (end of stream)
+    if hasattr(chatCompletionChunk, 'choices') and len(chatCompletionChunk.choices) > 0:
+        delta = chatCompletionChunk.choices[0].delta
+        if delta:
+            # Check if all properties are None/empty (end of stream chunk)
+            role_empty = not hasattr(delta, 'role') or delta.role is None
+            content_empty = not hasattr(delta, 'content') or delta.content is None
+            context_empty = not hasattr(delta, 'context') or delta.context is None
+            
+            if role_empty and content_empty and context_empty:
+                # Completely empty delta - return empty response to indicate chunk was handled
+                return response_obj
 
     logging.warning(f"format_stream_response returning empty dict for: {chatCompletionChunk.id if hasattr(chatCompletionChunk, 'id') else 'unknown'}")
     return {}

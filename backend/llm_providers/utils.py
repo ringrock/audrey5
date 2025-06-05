@@ -316,7 +316,7 @@ def build_search_context(search_results: List[Dict[str, Any]]) -> tuple[str, Lis
     for i, doc in enumerate(search_results):
         doc_id = i + 1
         content = doc.get("content", "").strip()
-        title = doc.get("title", f"Document {doc_id}")
+        title = doc.get("title") or doc.get("filename") or f"Document {doc_id}"
         
         if content:
             # Add document to context
