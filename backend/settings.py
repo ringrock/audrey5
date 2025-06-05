@@ -818,6 +818,24 @@ class _ClaudeSettings(BaseSettings):
     system_message: str = "Tu es un assistant IA serviable et précis."
 
 
+class _OpenAIDirectSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="OPENAI_DIRECT_",
+        env_file=DOTENV_PATH,
+        extra="ignore",
+        env_ignore_empty=True
+    )
+    
+    api_key: Optional[str] = None
+    model: str = "gpt-3.5-turbo"
+    max_tokens: int = 1000
+    temperature: float = 0.7
+    top_p: float = 1.0
+    stop_sequence: Optional[str] = None
+    base_url: Optional[str] = None  # For custom endpoints or proxies
+    system_message: str = "Tu es un assistant IA serviable et précis."
+
+
 class _CustomAvanteamSettings(BaseSettings):
     
     model_config = SettingsConfigDict(
@@ -845,13 +863,14 @@ class _BaseSettings(BaseSettings):
     auth_enabled: bool = True
     sanitize_answer: bool = False
     use_promptflow: bool = False
-    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI or CLAUDE
+    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, or OPENAI_DIRECT
 
 
 class _AppSettings(BaseModel):
     base_settings: _BaseSettings = _BaseSettings()
     azure_openai: _AzureOpenAISettings = _AzureOpenAISettings()
     claude: _ClaudeSettings = _ClaudeSettings()
+    openai_direct: _OpenAIDirectSettings = _OpenAIDirectSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
     custom_avanteam_settings: _CustomAvanteamSettings = _CustomAvanteamSettings()
