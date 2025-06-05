@@ -19,7 +19,28 @@ import styles from './CustomizationPanel.module.css'
 export interface CustomizationPreferences {
   responseSize: 'veryShort' | 'medium' | 'comprehensive';
   documentsCount: number;
-  llmProvider?: string;
+  llmProvider: string;
+}
+
+// Fonction utilitaire pour charger les préférences depuis localStorage (définie en dehors du composant)
+const loadPreferencesFromStorage = (): CustomizationPreferences | null => {
+  try {
+    const saved = localStorage.getItem('userCustomizationPreferences')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      // Validation des données pour éviter les erreurs
+      if (parsed && typeof parsed === 'object') {
+        return {
+          responseSize: parsed.responseSize || 'medium',
+          documentsCount: typeof parsed.documentsCount === 'number' ? parsed.documentsCount : 5,
+          llmProvider: parsed.llmProvider || 'AZURE_OPENAI'
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load customization preferences from localStorage:', error)
+  }
+  return null
 }
 
 export function CustomizationPanel() {
@@ -29,17 +50,28 @@ export function CustomizationPanel() {
   const [toastMessage, setToastMessage] = useState('')
   const [currentLanguage, setCurrentLanguage] = useState('FR')
   
-  // États pour les préférences utilisateur
+  // États pour les préférences utilisateur - initialisés avec les valeurs sauvegardées ou par défaut
+  const getInitialPreferences = () => {
+    const saved = loadPreferencesFromStorage()
+    return saved || {
+      responseSize: appStateContext?.state.customizationPreferences?.responseSize || 'medium',
+      documentsCount: appStateContext?.state.customizationPreferences?.documentsCount || 5,
+      llmProvider: appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI'
+    }
+  }
+
+  const initialPrefs = getInitialPreferences()
+  
   const [responseSize, setResponseSize] = useState<'veryShort' | 'medium' | 'comprehensive'>(
-    appStateContext?.state.customizationPreferences?.responseSize || 'medium'
+    initialPrefs.responseSize as 'veryShort' | 'medium' | 'comprehensive'
   )
   
   const [documentsCount, setDocumentsCount] = useState<number>(
-    appStateContext?.state.customizationPreferences?.documentsCount || 5
+    initialPrefs.documentsCount
   )
   
   const [llmProvider, setLlmProvider] = useState<string>(
-    appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI'
+    initialPrefs.llmProvider || 'AZURE_OPENAI'
   )
   
   const panelRef = useRef<HTMLDivElement>(null)
@@ -63,6 +95,16 @@ export function CustomizationPanel() {
   // Déterminer si on est en mode développement
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   
+  // Fonction pour sauvegarder les préférences dans localStorage
+  const savePreferencesToStorage = (preferences: CustomizationPreferences) => {
+    try {
+      localStorage.setItem('userCustomizationPreferences', JSON.stringify(preferences))
+    } catch (error) {
+      console.warn('Failed to save customization preferences to localStorage:', error)
+    }
+  }
+
+
   // Fonction pour mettre à jour les préférences
   const updatePreferences = (newResponseSize?: 'veryShort' | 'medium' | 'comprehensive', newDocumentsCount?: number, newLlmProvider?: string) => {
     const updatedPreferences: CustomizationPreferences = {
@@ -70,6 +112,9 @@ export function CustomizationPanel() {
       documentsCount: newDocumentsCount !== undefined ? newDocumentsCount : documentsCount,
       llmProvider: newLlmProvider || llmProvider
     }
+    
+    // Sauvegarder dans localStorage
+    savePreferencesToStorage(updatedPreferences)
     
     // Mise à jour des préférences dans le contexte global sans afficher de toast
     appStateContext?.dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: updatedPreferences })
@@ -130,6 +175,13 @@ export function CustomizationPanel() {
     setDocumentsCount(5)
     setLlmProvider(defaultProvider)
     
+    // Supprimer les préférences du localStorage
+    try {
+      localStorage.removeItem('userCustomizationPreferences')
+    } catch (error) {
+      console.warn('Failed to remove customization preferences from localStorage:', error)
+    }
+    
     // Mettre à jour l'état global
     appStateContext?.dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: defaultPreferences })
     
@@ -142,6 +194,21 @@ export function CustomizationPanel() {
       setShowToast(false)
     }, 2000)
   }
+
+  // useEffect pour charger les préférences sauvegardées au démarrage
+  useEffect(() => {
+    // Charger les préférences depuis localStorage
+    const savedPreferences = loadPreferencesFromStorage()
+    if (savedPreferences) {
+      // Mettre à jour l'état local
+      setResponseSize(savedPreferences.responseSize)
+      setDocumentsCount(savedPreferences.documentsCount)
+      setLlmProvider(savedPreferences.llmProvider || 'AZURE_OPENAI')
+      
+      // Mettre à jour l'état global
+      appStateContext?.dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: savedPreferences })
+    }
+  }, []) // Se déclenche seulement au montage du composant
 
   useEffect(() => {
     // Définir l'animation d'apparition après montage du composant
@@ -157,7 +224,7 @@ export function CustomizationPanel() {
     if (appStateContext?.state.customizationPreferences) {
       setResponseSize(appStateContext.state.customizationPreferences.responseSize);
       setDocumentsCount(appStateContext.state.customizationPreferences.documentsCount);
-      setLlmProvider(appStateContext.state.customizationPreferences.llmProvider || 'AZURE_OPENAI');
+      setLlmProvider(appStateContext.state.customizationPreferences.llmProvider);
     }
     
     // Ajouter l'écouteur pour la touche Escape
