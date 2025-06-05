@@ -802,6 +802,21 @@ class _MongoDbSettings(BaseSettings, DatasourcePayloadConstructor):
         }
         
 
+class _ClaudeSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="CLAUDE_",
+        env_file=DOTENV_PATH,
+        extra="ignore",
+        env_ignore_empty=True
+    )
+    
+    api_key: Optional[str] = None
+    model: str = "claude-3-opus-20240229"
+    max_tokens: int = 1000
+    temperature: float = 0
+    top_p: float = 1.0
+
+
 class _CustomAvanteamSettings(BaseSettings):
     
     model_config = SettingsConfigDict(
@@ -829,11 +844,13 @@ class _BaseSettings(BaseSettings):
     auth_enabled: bool = True
     sanitize_answer: bool = False
     use_promptflow: bool = False
+    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI or CLAUDE
 
 
 class _AppSettings(BaseModel):
     base_settings: _BaseSettings = _BaseSettings()
     azure_openai: _AzureOpenAISettings = _AzureOpenAISettings()
+    claude: _ClaudeSettings = _ClaudeSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
     custom_avanteam_settings: _CustomAvanteamSettings = _CustomAvanteamSettings()

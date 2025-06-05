@@ -154,6 +154,39 @@ Note: RBAC assignments can take a few minutes before becoming effective.
 
     See the [documentation](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/reference#example-response-2) for more information on these parameters.
 
+#### LLM Provider Selection (Claude AI Support)
+
+This application now supports multiple Language Model providers. You can choose between Azure OpenAI and Claude AI.
+
+1. **Configure the LLM Provider** in your `.env` file:
+
+    | App Setting | Required? | Default Value | Note |
+    | --- | --- | --- | ------------- |
+    |LLM_PROVIDER|No|AZURE_OPENAI|The LLM provider to use. Options: `AZURE_OPENAI`, `CLAUDE`|
+
+2. **If using Claude AI**, configure these additional settings:
+
+    | App Setting | Required? | Default Value | Note |
+    | --- | --- | --- | ------------- |
+    |CLAUDE_API_KEY|Yes (if using Claude)||Your Anthropic API key|
+    |CLAUDE_MODEL|No|claude-3-opus-20240229|The Claude model to use|
+    |CLAUDE_MAX_TOKENS|No|1000|Maximum tokens for Claude responses|
+    |CLAUDE_TEMPERATURE|No|0|Temperature setting for Claude (0-1)|
+    |CLAUDE_TOP_P|No|1.0|Top-p sampling parameter for Claude|
+
+3. **Development Mode Feature**: In development mode (`NODE_ENV=development`), users can dynamically switch between providers using a dropdown in the Customization panel. This allows testing different LLMs without restarting the application.
+
+    To access this feature:
+    - Run the frontend in development mode
+    - Open the Customization panel (settings icon)
+    - Select your preferred Language Model from the dropdown
+
+4. **Important Notes**:
+    - The provider specified in `.env` is used in production
+    - In development mode, the dropdown selection overrides the `.env` setting for that session
+    - Claude AI does not support Azure-specific features like function calling or data sources
+    - Response format is automatically homogenized to maintain frontend compatibility
+
 
 #### Chat with your data
 
