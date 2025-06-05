@@ -47,6 +47,7 @@ from backend.utils import (
     convert_to_pf_format,
     format_pf_non_streaming_response,
 )
+from backend.llm_providers import LLMProviderFactory
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
@@ -470,18 +471,54 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
             filtered_messages.append(message)
             
     request_body['messages'] = filtered_messages
-    model_args = prepare_model_args(request_body, request_headers, shouldStream)
-
-    try:
-        azure_openai_client = await init_openai_client()
-        raw_response = await azure_openai_client.chat.completions.with_raw_response.create(**model_args)
-        response = raw_response.parse()
-        apim_request_id = raw_response.headers.get("apim-request-id") 
-    except Exception as e:
-        logging.exception("Exception in send_chat_request")
-        raise e
-
-    return response, apim_request_id
+    
+    # Get provider from request or use default
+    provider_type = request_body.get("provider", LLMProviderFactory.get_default_provider())
+    
+    # For backward compatibility with Azure OpenAI specific features
+    if provider_type == "AZURE_OPENAI":
+        model_args = prepare_model_args(request_body, request_headers, shouldStream)
+        try:
+            azure_openai_client = await init_openai_client()
+            raw_response = await azure_openai_client.chat.completions.with_raw_response.create(**model_args)
+            response = raw_response.parse()
+            apim_request_id = raw_response.headers.get("apim-request-id") 
+        except Exception as e:
+            logging.exception("Exception in send_chat_request")
+            raise e
+        return response, apim_request_id
+    else:
+        # Use the new LLM provider abstraction
+        try:
+            provider = LLMProviderFactory.create_provider(provider_type)
+            
+            # Extract necessary parameters from model_args
+            model_args = prepare_model_args(request_body, request_headers, shouldStream)
+            
+            # Send request to provider
+            logging.debug(f"Sending request to {provider_type} with shouldStream={shouldStream}")
+            raw_response, apim_request_id = await provider.send_request(
+                messages=model_args["messages"],
+                stream=shouldStream,
+                temperature=model_args.get("temperature"),
+                max_tokens=model_args.get("max_tokens"),
+                top_p=model_args.get("top_p"),
+                stop=model_args.get("stop"),
+                user=model_args.get("user"),
+                model=model_args.get("model")
+            )
+            
+            logging.debug(f"Raw response from {provider_type}: {type(raw_response)} - {str(raw_response)[:200]}...")
+            
+            # Format response to match Azure OpenAI format
+            response = provider.format_response(raw_response, stream=shouldStream)
+            
+            logging.debug(f"Formatted response: {type(response)} - {str(response)[:200]}...")
+            
+            return response, apim_request_id
+        except Exception as e:
+            logging.exception(f"Exception in send_chat_request with provider {provider_type}")
+            raise e
 
 
 async def complete_chat_request(request_body, request_headers):
@@ -495,9 +532,12 @@ async def complete_chat_request(request_body, request_headers):
             app_settings.promptflow.citations_field_name
         )
     else:
+        logging.debug("Calling send_chat_request with shouldStream=False")
         response, apim_request_id = await send_chat_request(request_body, request_headers, False)
+        logging.debug(f"send_chat_request response type: {type(response)}, apim_request_id: {apim_request_id}")
         history_metadata = request_body.get("history_metadata", {})
         non_streaming_response = format_non_streaming_response(response, history_metadata, apim_request_id)
+        logging.debug(f"non_streaming_response: {type(non_streaming_response)} - {str(non_streaming_response)[:200]}...")
 
         if app_settings.azure_openai.function_call_azure_functions_enabled:
             function_response = await process_function_call(response)  # Add await here
@@ -576,11 +616,18 @@ async def process_function_call_stream(completionChunk, function_call_stream_sta
 
 
 async def stream_chat_request(request_body, request_headers):
-    response, apim_request_id = await send_chat_request(request_body, request_headers)
+    # Get provider from request or use default
+    provider_type = request_body.get("provider", LLMProviderFactory.get_default_provider())
+    
+    # Enable streaming for both providers
+    shouldStream = True
+    
+    response, apim_request_id = await send_chat_request(request_body, request_headers, shouldStream)
     history_metadata = request_body.get("history_metadata", {})
     
     async def generate(apim_request_id, history_metadata):
-        if app_settings.azure_openai.function_call_azure_functions_enabled:
+        # Azure OpenAI specific function calling logic
+        if provider_type == "AZURE_OPENAI" and app_settings.azure_openai.function_call_azure_functions_enabled:
             # Maintain state during function call streaming
             function_call_stream_state = AzureOpenaiFunctionCallStreamState()
             
@@ -600,8 +647,31 @@ async def stream_chat_request(request_body, request_headers):
                         yield format_stream_response(functionCompletionChunk, history_metadata, apim_request_id)
                 
         else:
-            async for completionChunk in response:
-                yield format_stream_response(completionChunk, history_metadata, apim_request_id)
+            # For Claude and non-function Azure OpenAI requests
+            if hasattr(response, '__aiter__'):
+                # Response is already an async generator (streaming)
+                async for completionChunk in response:
+                    yield format_stream_response(completionChunk, history_metadata, apim_request_id)
+            elif isinstance(response, dict):
+                # Response is a single completion object (non-streaming) - but this shouldn't happen for Claude
+                logging.warning(f"Received dict response in stream_chat_request: {type(response)}")
+                yield format_stream_response(response, history_metadata, apim_request_id)
+            elif hasattr(response, 'id'):
+                # Response is a single completion object (MockAzureOpenAIResponse for Claude)
+                logging.error(f"DEBUG: Processing Claude single completion object: {type(response)}")
+                logging.error(f"DEBUG: Claude response.id: {response.id}")
+                logging.error(f"DEBUG: Claude response.choices: {len(response.choices) if response.choices else 0}")
+                if response.choices and len(response.choices) > 0:
+                    choice = response.choices[0]
+                    logging.error(f"DEBUG: Choice.delta.content: '{choice.delta.content if hasattr(choice, 'delta') else 'No delta'}'")
+                    logging.error(f"DEBUG: Choice.message.content: '{choice.message.content if hasattr(choice, 'message') else 'No message'}'")
+                formatted_response = format_stream_response(response, history_metadata, apim_request_id)
+                logging.error(f"DEBUG: format_stream_response returned: {formatted_response}")
+                yield formatted_response
+            else:
+                # Response is a regular iterable (fallback)
+                for completionChunk in response:
+                    yield format_stream_response(completionChunk, history_metadata, apim_request_id)
 
     return generate(apim_request_id=apim_request_id, history_metadata=history_metadata)
 
@@ -633,19 +703,23 @@ def LogCallToAiManager(request_body):
 async def conversation_internal(request_body, request_headers, preventShouldStream = False):
     try:
         # LogCallToAiManager(request_body)
+        logging.debug(f"conversation_internal: stream={app_settings.azure_openai.stream}, use_promptflow={app_settings.base_settings.use_promptflow}, preventShouldStream={preventShouldStream}")
 
         if app_settings.azure_openai.stream and not app_settings.base_settings.use_promptflow and not preventShouldStream:
+            logging.debug("Using streaming chat request")
             result = await stream_chat_request(request_body, request_headers)
             response = await make_response(format_as_ndjson(result))
             response.timeout = None
             response.mimetype = "application/json-lines"
             return response
         else:
+            logging.debug("Using complete chat request")
             result = await complete_chat_request(request_body, request_headers)
+            logging.debug(f"complete_chat_request result: {type(result)} - {str(result)[:200]}...")
             return jsonify(result)
 
     except Exception as ex:
-        logging.exception(ex)
+        logging.exception(f"Exception in conversation_internal: {ex}")
         if hasattr(ex, "status_code"):
             return jsonify({"error": str(ex)}), ex.status_code
         else:
@@ -759,6 +833,7 @@ async def check_tokens():
 ## Conversation History API ##
 @bp.route("/history/generate", methods=["POST"])
 async def add_conversation():
+    logging.error("DEBUG: /history/generate called!")
     if not(CheckAuthenticate(request)):
         return jsonify({"error": "Unauthorized"}), 401
     await cosmos_db_ready.wait()
@@ -788,8 +863,12 @@ async def add_conversation():
                 user_id=user_id, title=title
             )
             conversation_id = conversation_dict["id"]
+            history_metadata["conversation_id"] = conversation_id
             history_metadata["title"] = title
             history_metadata["date"] = conversation_dict["createdAt"]
+        else:
+            # For existing conversations, still add the conversation_id to metadata
+            history_metadata["conversation_id"] = conversation_id
 
         ## Format the incoming message object in the "chat/completions" messages format
         ## then write it to the conversation history in cosmos
@@ -811,10 +890,11 @@ async def add_conversation():
             raise Exception("No user message found")
 
         # Submit request to Chat Completions for response
-        request_body = await request.get_json()
-        history_metadata["conversation_id"] = conversation_id
-        request_body["history_metadata"] = history_metadata
-        return await conversation_internal(request_body, request.headers)
+        # Use the already parsed request_json instead of parsing again
+        request_json["history_metadata"] = history_metadata
+        logging.error(f"DEBUG: history/generate final history_metadata: {history_metadata}")
+        logging.error(f"DEBUG: history/generate conversation_id being passed: {conversation_id}")
+        return await conversation_internal(request_json, request.headers)
 
     except Exception as e:
         logging.exception("Exception in /history/generate")
@@ -835,7 +915,9 @@ async def update_conversation():
 
     ## check request for conversation_id
     request_json = await request.get_json()
+    logging.debug(f"history/update received request: {request_json}")
     conversation_id = request_json.get("conversation_id", None)
+    logging.debug(f"history/update conversation_id: {conversation_id}")
 
     try:
         # make sure cosmos is configured
@@ -844,11 +926,26 @@ async def update_conversation():
 
         # check for the conversation_id, if the conversation is not set, we will create a new one
         if not conversation_id:
+            logging.error(f"No conversation_id found in request: {request_json}")
             raise Exception("No conversation_id found")
 
         ## Format the incoming message object in the "chat/completions" messages format
         ## then write it to the conversation history in cosmos
         messages = request_json["messages"]
+        
+        # Filter out invalid messages (empty objects, missing role, etc.)
+        valid_messages = []
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") and msg.get("content") is not None:
+                valid_messages.append(msg)
+            else:
+                logging.warning(f"Filtering out invalid message: {msg}")
+        
+        messages = valid_messages
+        logging.error(f"DEBUG: Valid messages after filtering: {len(messages)} messages")
+        for i, msg in enumerate(messages):
+            logging.error(f"DEBUG: Message {i}: role='{msg.get('role')}', content='{msg.get('content', '')[:50]}...'")
+        
         if len(messages) > 0 and messages[-1]["role"] == "assistant":
             if len(messages) > 1 and messages[-2].get("role", None) == "tool":
                 # write the tool message first

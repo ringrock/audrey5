@@ -126,11 +126,11 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
     if len(chatCompletionChunk.choices) > 0:
         delta = chatCompletionChunk.choices[0].delta
         if delta:
-            if hasattr(delta, "context"):
+            if hasattr(delta, "context") and delta.context:
                 messageObj = {"role": "tool", "content": json.dumps(delta.context)}
                 response_obj["choices"][0]["messages"].append(messageObj)
                 return response_obj
-            if delta.role == "assistant" and hasattr(delta, "context"):
+            if delta.role == "assistant" and hasattr(delta, "context") and delta.context:
                 messageObj = {
                     "role": "assistant",
                     "context": delta.context,
@@ -154,14 +154,21 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
                 response_obj["choices"][0]["messages"].append(messageObj)
                 return response_obj
             else:
+                logging.error(f"DEBUG: Checking delta.content for {chatCompletionChunk.id}: content='{delta.content}', has_content={bool(delta.content)}")
                 if delta.content:
                     messageObj = {
                         "role": "assistant",
                         "content": delta.content,
+                        "id": chatCompletionChunk.id,  # Ajouter l'ID du message
+                        "date": f"{chatCompletionChunk.created}000"  # Timestamp en millisecondes
                     }
                     response_obj["choices"][0]["messages"].append(messageObj)
+                    logging.error(f"DEBUG: format_stream_response returning assistant message: {messageObj}")
                     return response_obj
+                else:
+                    logging.error(f"DEBUG: delta.content is empty/falsy for {chatCompletionChunk.id}")
 
+    logging.warning(f"format_stream_response returning empty dict for: {chatCompletionChunk.id if hasattr(chatCompletionChunk, 'id') else 'unknown'}")
     return {}
 
 
