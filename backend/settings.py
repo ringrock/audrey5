@@ -852,6 +852,18 @@ class _CustomAvanteamSettings(BaseSettings):
         
 
 
+class _ResponseSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="RESPONSE_",
+        env_file=DOTENV_PATH,
+        extra="ignore",
+        env_ignore_empty=True
+    )
+    
+    very_short_max_tokens: int = 300
+    comprehensive_max_tokens: int = 2000
+
+
 class _BaseSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=DOTENV_PATH,
@@ -882,6 +894,7 @@ class _AppSettings(BaseModel):
     openai_direct: _OpenAIDirectSettings = _OpenAIDirectSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
+    response: _ResponseSettings = _ResponseSettings()
     custom_avanteam_settings: _CustomAvanteamSettings = _CustomAvanteamSettings()
     
     # Constructed properties

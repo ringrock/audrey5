@@ -50,10 +50,12 @@ class LLMProvider(ABC):
         Returns:
             Adjusted max_tokens value
         """
+        from backend.settings import app_settings
+        
         if response_size == "veryShort":
-            return min(base_max_tokens, 300)  # Allow enough tokens for complete short sentences
+            return min(base_max_tokens, app_settings.response.very_short_max_tokens)
         elif response_size == "comprehensive":
-            return max(base_max_tokens, 2000)  # Allow longer responses
+            return max(base_max_tokens, app_settings.response.comprehensive_max_tokens)
         else:
             return base_max_tokens
     
