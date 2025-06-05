@@ -20,7 +20,8 @@ export async function conversationApi(
       messages: options.messages,
       currentUser: username,
       userFullDefinition: userFullDefinition,
-      customizationPreferences: customizationPreferences
+      customizationPreferences: customizationPreferences,
+      provider: customizationPreferences?.llmProvider
     }),
     signal: abortSignal
   })

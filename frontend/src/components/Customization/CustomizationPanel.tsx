@@ -19,6 +19,7 @@ import styles from './CustomizationPanel.module.css'
 export interface CustomizationPreferences {
   responseSize: 'veryShort' | 'medium' | 'comprehensive';
   documentsCount: number;
+  llmProvider?: 'AZURE_OPENAI' | 'CLAUDE';
 }
 
 export function CustomizationPanel() {
@@ -37,6 +38,10 @@ export function CustomizationPanel() {
     appStateContext?.state.customizationPreferences?.documentsCount || 5
   )
   
+  const [llmProvider, setLlmProvider] = useState<'AZURE_OPENAI' | 'CLAUDE'>(
+    appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI'
+  )
+  
   const panelRef = useRef<HTMLDivElement>(null)
   
   // Options pour le choix de la taille de réponse
@@ -46,11 +51,21 @@ export function CustomizationPanel() {
     { key: 'comprehensive', text: currentLanguage === 'FR' ? 'Très complète' : 'Comprehensive' }
   ]
   
+  // Options pour le choix du provider LLM (uniquement en mode dev)
+  const llmProviderOptions: IChoiceGroupOption[] = [
+    { key: 'AZURE_OPENAI', text: 'Azure OpenAI' },
+    { key: 'CLAUDE', text: 'Claude AI' }
+  ]
+  
+  // Déterminer si on est en mode développement
+  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  
   // Fonction pour mettre à jour les préférences
-  const updatePreferences = (newResponseSize?: 'veryShort' | 'medium' | 'comprehensive', newDocumentsCount?: number) => {
+  const updatePreferences = (newResponseSize?: 'veryShort' | 'medium' | 'comprehensive', newDocumentsCount?: number, newLlmProvider?: 'AZURE_OPENAI' | 'CLAUDE') => {
     const updatedPreferences: CustomizationPreferences = {
       responseSize: newResponseSize || responseSize,
-      documentsCount: newDocumentsCount !== undefined ? newDocumentsCount : documentsCount
+      documentsCount: newDocumentsCount !== undefined ? newDocumentsCount : documentsCount,
+      llmProvider: newLlmProvider || llmProvider
     }
     
     // Mise à jour des préférences dans le contexte global sans afficher de toast
@@ -62,13 +77,21 @@ export function CustomizationPanel() {
     if (option) {
       const newValue = option.key as 'veryShort' | 'medium' | 'comprehensive'
       setResponseSize(newValue)
-      updatePreferences(newValue, undefined)
+      updatePreferences(newValue, undefined, undefined)
     }
   }
   
   const handleDocumentsCountChange = (value: number) => {
     setDocumentsCount(value)
-    updatePreferences(undefined, value)
+    updatePreferences(undefined, value, undefined)
+  }
+  
+  const handleLlmProviderChange = (_: React.FormEvent<HTMLElement | HTMLInputElement> | undefined, option?: IChoiceGroupOption) => {
+    if (option) {
+      const newValue = option.key as 'AZURE_OPENAI' | 'CLAUDE'
+      setLlmProvider(newValue)
+      updatePreferences(undefined, undefined, newValue)
+    }
   }
   
   // Fermeture du panneau de personnalisation
@@ -94,12 +117,14 @@ export function CustomizationPanel() {
   const resetToDefaults = () => {
     const defaultPreferences: CustomizationPreferences = {
       responseSize: 'medium',
-      documentsCount: 5
+      documentsCount: 5,
+      llmProvider: 'AZURE_OPENAI'
     }
     
     // Mettre à jour l'état local
     setResponseSize('medium')
     setDocumentsCount(5)
+    setLlmProvider('AZURE_OPENAI')
     
     // Mettre à jour l'état global
     appStateContext?.dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: defaultPreferences })
@@ -128,6 +153,7 @@ export function CustomizationPanel() {
     if (appStateContext?.state.customizationPreferences) {
       setResponseSize(appStateContext.state.customizationPreferences.responseSize);
       setDocumentsCount(appStateContext.state.customizationPreferences.documentsCount);
+      setLlmProvider(appStateContext.state.customizationPreferences.llmProvider || 'AZURE_OPENAI');
     }
     
     // Ajouter l'écouteur pour la touche Escape
@@ -249,6 +275,37 @@ export function CustomizationPanel() {
                 : 'Warning: A higher number of documents may decrease answer precision and increase processing time.'}
             </MessageBar>
           </div>
+          
+          {/* Section du choix du provider LLM - uniquement en mode dev */}
+          {isDevelopment && (
+            <div className={styles.settingSection}>
+              <h3 className={styles.settingTitle}>
+                <Icon iconName="Robot" className={styles.settingIcon} />
+                {currentLanguage === 'FR' ? 'Modèle de langage' : 'Language Model'}
+              </h3>
+              <p className={styles.settingDescription}>
+                {currentLanguage === 'FR' 
+                  ? 'Choisissez le modèle de langage à utiliser pour générer les réponses.' 
+                  : 'Choose the language model to use for generating responses.'}
+              </p>
+              
+              <ChoiceGroup 
+                selectedKey={llmProvider}
+                options={llmProviderOptions}
+                onChange={handleLlmProviderChange}
+                className={styles.choiceGroup}
+              />
+              
+              <MessageBar 
+                className={styles.infoMessage}
+                messageBarType={MessageBarType.info}
+              >
+                {currentLanguage === 'FR' 
+                  ? 'Cette option est disponible uniquement en mode développement.'
+                  : 'This option is only available in development mode.'}
+              </MessageBar>
+            </div>
+          )}
           
           {/* Bouton de réinitialisation uniquement */}
           <div className={styles.actionButtons}>

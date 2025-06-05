@@ -23,6 +23,7 @@
     "@mui/lab": "^5.0.0-alpha.173",
     "@mui/material": "^5.16.5",
     "@mui/styled-engine": "^5.16.4",
+    "@types/lodash": "^4.17.17",
     "dompurify": "^3.0.8",
     "html2canvas": "^1.4.1",
     "jspdf": "^3.0.1",
