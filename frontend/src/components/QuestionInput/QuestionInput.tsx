@@ -22,8 +22,28 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const [base64Image, setBase64Image] = useState<string | null>(null);
 
   const [isInitialQuestionSet, setIsInitialQuestionSet] = useState(false);
+  
+  // History management for arrow key navigation
+  const [history, setHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState<number>(-1)
+  const [tempQuestion, setTempQuestion] = useState<string>('')
 
   const appStateContext = useContext(AppStateContext)
+  
+  // Load history from localStorage on component mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('questionHistory')
+    if (savedHistory) {
+      try {
+        const parsedHistory = JSON.parse(savedHistory)
+        if (Array.isArray(parsedHistory)) {
+          setHistory(parsedHistory.slice(0, 50)) // Limit to 50 items
+        }
+      } catch (error) {
+        console.warn('Failed to parse question history from localStorage:', error)
+      }
+    }
+  }, [])
   const OYD_ENABLED = appStateContext?.state.frontendSettings?.oyd_enabled || false;
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,7 +68,25 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       return
     }
 
-    const questionTest: ChatMessage["content"] = base64Image ? [{ type: "text", text: question }, { type: "image_url", image_url: { url: base64Image } }] : question.toString();
+    const questionText = question.trim()
+    const questionTest: ChatMessage["content"] = base64Image ? [{ type: "text", text: questionText }, { type: "image_url", image_url: { url: base64Image } }] : questionText;
+
+    // Add to history if it's a new unique question
+    if (questionText && !history.includes(questionText)) {
+      const newHistory = [questionText, ...history].slice(0, 50) // Keep last 50 questions
+      setHistory(newHistory)
+      
+      // Save to localStorage
+      try {
+        localStorage.setItem('questionHistory', JSON.stringify(newHistory))
+      } catch (error) {
+        console.warn('Failed to save question history to localStorage:', error)
+      }
+    }
+    
+    // Reset history navigation
+    setHistoryIndex(-1)
+    setTempQuestion('')
 
     if (conversationId && questionTest !== undefined) {
       onSend(questionTest, conversationId)
@@ -67,11 +105,40 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     if (ev.key === 'Enter' && !ev.shiftKey && !(ev.nativeEvent?.isComposing === true)) {
       ev.preventDefault()
       sendQuestion()
+    } else if (ev.key === 'ArrowUp' && history.length > 0) {
+      ev.preventDefault()
+      
+      // First time navigating up: save current question
+      if (historyIndex === -1) {
+        setTempQuestion(question)
+      }
+      
+      const newIndex = Math.min(historyIndex + 1, history.length - 1)
+      setHistoryIndex(newIndex)
+      setQuestion(history[newIndex])
+    } else if (ev.key === 'ArrowDown') {
+      ev.preventDefault()
+      
+      if (historyIndex > 0) {
+        const newIndex = historyIndex - 1
+        setHistoryIndex(newIndex)
+        setQuestion(history[newIndex])
+      } else if (historyIndex === 0) {
+        // Return to original/temp question
+        setHistoryIndex(-1)
+        setQuestion(tempQuestion)
+      }
     }
   }
 
   const onQuestionChange = (_ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
     setQuestion(newValue || '')
+    
+    // Reset history navigation if user is typing
+    if (historyIndex !== -1) {
+      setHistoryIndex(-1)
+      setTempQuestion('')
+    }
   }
 
   var sendQuestionDisabled = disabled || !question.trim()
