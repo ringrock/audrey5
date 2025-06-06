@@ -118,16 +118,15 @@ class ClaudeProvider(LLMProvider):
             
             # Search context enhancement completed
             
-            # Use centralized max_tokens adjustment
+            # Get max_tokens based on response size
             response_size = kwargs.get("response_size", "medium")
-            base_max_tokens = kwargs.get("max_tokens", app_settings.claude.max_tokens)
-            adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
+            max_tokens = self._get_max_tokens_for_response_size("claude", response_size)
             
             # Build Claude API request
             request_body = {
                 "model": self.model,
                 "messages": claude_messages,
-                "max_tokens": adjusted_max_tokens,
+                "max_tokens": max_tokens,
                 "temperature": kwargs.get("temperature", app_settings.claude.temperature),
                 "stream": stream
             }

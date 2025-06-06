@@ -107,10 +107,9 @@ class _AzureOpenAISettings(BaseSettings):
     key: Optional[str] = None
     resource: Optional[str] = None
     endpoint: Optional[str] = None
-    temperature: float = 0
-    top_p: float = 0
-    max_tokens: int = 1000
-    stream: bool = True
+    temperature: float
+    top_p: float
+    stream: bool
     stop_sequence: Optional[List[str]] = None
     seed: Optional[int] = None
     choices_count: Optional[conint(ge=1, le=128)] = Field(default=1, serialization_alias="n")
@@ -118,9 +117,12 @@ class _AzureOpenAISettings(BaseSettings):
     tools: Optional[conlist(_AzureOpenAITool, min_length=1)] = None
     tool_choice: Optional[str] = None
     logit_bias: Optional[dict] = None
-    presence_penalty: Optional[confloat(ge=-2.0, le=2.0)] = 0.0
-    frequency_penalty: Optional[confloat(ge=-2.0, le=2.0)] = 0.0
-    system_message: str = "You are an AI assistant that helps people find information."
+    presence_penalty: Optional[confloat(ge=-2.0, le=2.0)] = None
+    frequency_penalty: Optional[confloat(ge=-2.0, le=2.0)] = None
+    system_message: str
+    response_very_short_max_tokens: int
+    response_normal_max_tokens: int
+    response_comprehensive_max_tokens: int
     preview_api_version: str = MINIMUM_SUPPORTED_AZURE_OPENAI_PREVIEW_API_VERSION
     embedding_endpoint: Optional[str] = None
     embedding_key: Optional[str] = None
@@ -811,11 +813,13 @@ class _ClaudeSettings(BaseSettings):
     )
     
     api_key: Optional[str] = None
-    model: str = "claude-3-opus-20240229"
-    max_tokens: int = 1000
-    temperature: float = 0
-    top_p: float = 1.0
-    system_message: str = "Tu es un assistant IA serviable et précis."
+    model: str
+    temperature: float
+    top_p: float
+    system_message: str
+    response_very_short_max_tokens: int
+    response_normal_max_tokens: int
+    response_comprehensive_max_tokens: int
 
 
 class _OpenAIDirectSettings(BaseSettings):
@@ -827,13 +831,15 @@ class _OpenAIDirectSettings(BaseSettings):
     )
     
     api_key: Optional[str] = None
-    model: str = "gpt-3.5-turbo"
-    max_tokens: int = 1000
-    temperature: float = 0.7
-    top_p: float = 1.0
+    model: str
+    temperature: float
+    top_p: float
     stop_sequence: Optional[str] = None
-    base_url: Optional[str] = None  # For custom endpoints or proxies
-    system_message: str = "Tu es un assistant IA serviable et précis."
+    base_url: Optional[str] = None
+    system_message: str
+    response_very_short_max_tokens: int
+    response_normal_max_tokens: int
+    response_comprehensive_max_tokens: int
 
 
 class _MistralSettings(BaseSettings):
@@ -845,11 +851,13 @@ class _MistralSettings(BaseSettings):
     )
     
     api_key: Optional[str] = None
-    model: str = "mistral-large-latest"
-    max_tokens: int = 1000
-    temperature: float = 0.7
-    top_p: float = 1.0
-    system_message: str = "Tu es un assistant IA serviable et précis."
+    model: str
+    temperature: float
+    top_p: float
+    system_message: str
+    response_very_short_max_tokens: int
+    response_normal_max_tokens: int
+    response_comprehensive_max_tokens: int
 
 
 class _CustomAvanteamSettings(BaseSettings):
@@ -868,16 +876,6 @@ class _CustomAvanteamSettings(BaseSettings):
         
 
 
-class _ResponseSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="RESPONSE_",
-        env_file=DOTENV_PATH,
-        extra="ignore",
-        env_ignore_empty=True
-    )
-    
-    very_short_max_tokens: int = 300
-    comprehensive_max_tokens: int = 2000
 
 
 class _BaseSettings(BaseSettings):
@@ -911,7 +909,6 @@ class _AppSettings(BaseModel):
     mistral: _MistralSettings = _MistralSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
-    response: _ResponseSettings = _ResponseSettings()
     custom_avanteam_settings: _CustomAvanteamSettings = _CustomAvanteamSettings()
     
     # Constructed properties

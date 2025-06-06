@@ -40,25 +40,28 @@ class LLMProvider(ABC):
         self.initialized = False
         self.logger = logging.getLogger(self.__class__.__name__)
     
-    def _adjust_max_tokens_for_response_size(self, base_max_tokens: int, response_size: str) -> int:
+    def _get_max_tokens_for_response_size(self, provider_name: str, response_size: str) -> int:
         """
-        Adjust max_tokens based on response size preference.
+        Get max_tokens based on provider and response size preference.
         
         Args:
-            base_max_tokens: Base max tokens value
+            provider_name: Name of the LLM provider (azure_openai, claude, openai_direct, mistral)
             response_size: Response size preference (veryShort, medium, comprehensive)
             
         Returns:
-            Adjusted max_tokens value
+            Max tokens value for the specific provider and response size
         """
         from backend.settings import app_settings
         
+        # Get the provider settings
+        provider_settings = getattr(app_settings, provider_name)
+        
         if response_size == "veryShort":
-            return min(base_max_tokens, app_settings.response.very_short_max_tokens)
+            return provider_settings.response_very_short_max_tokens
         elif response_size == "comprehensive":
-            return max(base_max_tokens, app_settings.response.comprehensive_max_tokens)
-        else:
-            return base_max_tokens
+            return provider_settings.response_comprehensive_max_tokens
+        else:  # medium/normal
+            return provider_settings.response_normal_max_tokens
     
     def _build_response_size_instructions(self, base_message: str, response_size: str) -> str:
         """

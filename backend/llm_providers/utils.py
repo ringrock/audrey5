@@ -79,6 +79,9 @@ class AzureSearchService:
             if not app_settings.datasource:
                 self.logger.warning("Azure Search not configured")
                 return []
+            
+            # Debug logging for top_k parameter (using INFO to ensure visibility)
+            self.logger.info(f"AzureSearchService: search_documents called with top_k parameter: {top_k}")
                 
             search_service = app_settings.datasource.service
             search_index = app_settings.datasource.index
@@ -104,15 +107,20 @@ class AzureSearchService:
                 credential=credential
             )
             
-            # Configure search parameters
+            # Configure search parameters  
             if top_k is None:
-                top_k = app_settings.datasource.top_k or 5
+                # Use datasource top_k configuration, with fallback to 5
+                default_top_k = getattr(app_settings.datasource, 'top_k', 5)
+                self.logger.info(f"AzureSearchService: Using default top_k from datasource: {default_top_k}")
+                top_k = default_top_k
             
             search_params = {
                 "search_text": query,
                 "top": top_k,
                 "include_total_count": True
             }
+            
+            self.logger.info(f"AzureSearchService: Final search top_k used: {top_k}")
             
             # Build and apply filters
             combined_filter = self._build_filters(filters, user_permissions)
@@ -319,6 +327,10 @@ def build_search_context(search_results: List[Dict[str, Any]]) -> tuple[str, Lis
         title = doc.get("title") or doc.get("filename") or f"Document {doc_id}"
         
         if content:
+            # Limit content size to prevent Claude API errors (max ~8000 chars per doc)
+            if len(content) > 8000:
+                content = content[:7900] + "... [contenu tronqué]"
+            
             # Add document to context
             context_parts.append(f"[doc{doc_id}] {title}\n{content}")
             

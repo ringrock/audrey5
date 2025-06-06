@@ -128,16 +128,15 @@ class OpenAIDirectProvider(LLMProvider):
             # Convert OpenAI messages and enhance with Azure Search if configured
             enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
             
-            # Use centralized max_tokens adjustment
+            # Get max_tokens based on response size
             response_size = kwargs.get("response_size", "medium")
-            base_max_tokens = kwargs.get("max_tokens", getattr(app_settings.openai_direct, 'max_tokens', 1000))
-            adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
+            max_tokens = self._get_max_tokens_for_response_size("openai_direct", response_size)
             
             # Build request parameters with defaults from settings
             model_args = {
                 "messages": enhanced_messages,
                 "temperature": kwargs.get("temperature", getattr(app_settings.openai_direct, 'temperature', 0.7)),
-                "max_tokens": adjusted_max_tokens,
+                "max_tokens": max_tokens,
                 "top_p": kwargs.get("top_p", getattr(app_settings.openai_direct, 'top_p', 1.0)),
                 "stop": kwargs.get("stop", getattr(app_settings.openai_direct, 'stop_sequence', None)),
                 "stream": stream,
@@ -311,9 +310,8 @@ class OpenAIDirectProvider(LLMProvider):
         # Add system message with language awareness and response size preference using centralized method
         base_system_message = getattr(app_settings.openai_direct, 'system_message', 
                                      "Tu es un assistant IA serviable et précis.")
-        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
         response_size = kwargs.get("response_size", "medium")
-        system_message = self._build_response_size_instructions(multilingual_system_message, response_size)
+        system_message = get_system_message_for_language(detected_language, base_system_message, response_size)
         
         # Check if we need to perform Azure Search
         search_context = ""

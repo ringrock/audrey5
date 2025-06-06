@@ -120,10 +120,9 @@ class AzureOpenAIProvider(LLMProvider):
             detected_language = detect_language(user_message)
             self.logger.debug(f"Detected language: {detected_language}")
             
-            # Apply response size customization using centralized methods
+            # Get max_tokens based on response size
             response_size = kwargs.get("response_size", "medium")
-            base_max_tokens = kwargs.get("max_tokens", app_settings.azure_openai.max_tokens)
-            adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
+            max_tokens = self._get_max_tokens_for_response_size("azure_openai", response_size)
             
             # For Azure OpenAI, we handle both language and response size instructions:
             # - If datasource is configured: inject into role_information (done in _build_azure_search_extra_body)
@@ -141,7 +140,7 @@ class AzureOpenAIProvider(LLMProvider):
             model_args = {
                 "messages": enhanced_messages,
                 "temperature": kwargs.get("temperature", app_settings.azure_openai.temperature),
-                "max_tokens": adjusted_max_tokens,
+                "max_tokens": max_tokens,
                 "top_p": kwargs.get("top_p", app_settings.azure_openai.top_p),
                 "stop": kwargs.get("stop", app_settings.azure_openai.stop_sequence),
                 "stream": stream,
