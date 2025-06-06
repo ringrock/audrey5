@@ -214,7 +214,7 @@ class _SearchCommonSettings(BaseSettings):
         env_ignore_empty=True
     )
     max_search_queries: Optional[int] = None
-    allow_partial_result: bool = False
+    allow_partial_result: bool = True
     include_contexts: Optional[List[str]] = ["citations", "intent"]
     vectorization_dimensions: Optional[int] = None
     role_information: str = Field(

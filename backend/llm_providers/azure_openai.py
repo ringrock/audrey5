@@ -149,7 +149,9 @@ class AzureOpenAIProvider(LLMProvider):
             }
             
             # Add Azure Search integration via data_sources (Azure OpenAI "On Your Data")
-            extra_body = self._build_azure_search_extra_body(detected_language=detected_language, **kwargs)
+            # Remove response_size from kwargs to avoid conflict with explicit parameter
+            kwargs_clean = {k: v for k, v in kwargs.items() if k != 'response_size'}
+            extra_body = self._build_azure_search_extra_body(detected_language=detected_language, response_size=response_size, **kwargs_clean)
             if extra_body:
                 model_args["extra_body"] = extra_body
                 self.logger.debug("Added Azure Search data_sources to request with multilingual support")
@@ -213,7 +215,7 @@ class AzureOpenAIProvider(LLMProvider):
             standard_response = self._convert_azure_response(response)
             return StandardResponseAdapter(standard_response)
     
-    def _build_azure_search_extra_body(self, **kwargs) -> Optional[Dict[str, Any]]:
+    def _build_azure_search_extra_body(self, detected_language: str = "en", response_size: str = "medium", **kwargs) -> Optional[Dict[str, Any]]:
         """
         Build extra_body with data_sources configuration for Azure OpenAI "On Your Data".
         
@@ -250,8 +252,7 @@ class AzureOpenAIProvider(LLMProvider):
             )
             
             # CRITICAL: Inject both language and response size instructions into role_information for Azure OpenAI On Your Data
-            detected_language = kwargs.get("detected_language", "en")
-            response_size = kwargs.get("response_size", "medium")
+            # detected_language and response_size are now passed as explicit parameters
             
             if "parameters" in datasource_config:
                 # Get base role information or use default

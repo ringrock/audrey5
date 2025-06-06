@@ -193,9 +193,16 @@ def get_system_message_for_language(language: str, base_message: str = None, res
     combined_instruction = language_instruction + response_instruction
     
     # If a base message is provided, combine it with the enhanced instruction
-    # IMPORTANT: Preserve the original base message which contains critical business logic
+    # IMPORTANT: For non-French languages, prioritize the language instruction to override original French
     if base_message and base_message.strip():
-        return f"{base_message}\n\nIMPORTANT INSTRUCTION: {combined_instruction}"
+        if language != "fr":
+            # For non-French languages, prioritize language instruction
+            result = f"CRITICAL: {combined_instruction}\n\nBusiness context: {base_message}"
+            logger.debug(f"Generated language override for {language}")
+            return result
+        else:
+            # For French, preserve original message and add instructions
+            return f"{base_message}\n\nIMPORTANT INSTRUCTION: {combined_instruction}"
     
     return combined_instruction
 
