@@ -29,37 +29,83 @@ logger = logging.getLogger(__name__)
 
 def detect_language(text: str) -> str:
     """
-    Detect the language of the input text.
+    Detect the language of the input text with robust fallback.
     
     Args:
         text: The text to analyze for language detection
         
     Returns:
-        Two-letter language code (ISO 639-1) or 'en' as fallback
+        Two-letter language code (ISO 639-1) or configured default
         
     Note:
-        - Falls back to 'en' if detection fails or langdetect is unavailable
-        - Optimized for common languages in business contexts
+        - Uses simple word matching when langdetect unavailable
+        - Prioritizes French/English for Avanteam business context
+        - Configurable via DEFAULT_LANGUAGE environment variable
     """
-    if not LANGDETECT_AVAILABLE:
-        logger.warning("langdetect not available, falling back to English")
+    # Check for environment override
+    import os
+    default_language = os.getenv("DEFAULT_LANGUAGE", "fr")
+    
+    if not text or len(text.strip()) < 2:
+        logger.debug(f"Text too short for language detection, defaulting to {default_language}")
+        return default_language
+    
+    text_lower = text.strip().lower()
+    words = text_lower.split()
+    
+    # Simple word-based detection for common cases
+    french_words = {
+        "salut", "bonjour", "bonsoir", "merci", "oui", "non", "comment", 
+        "où", "quand", "pourquoi", "qui", "que", "quoi", "ça", "c'est",
+        "je", "tu", "il", "elle", "nous", "vous", "ils", "elles",
+        "un", "une", "le", "la", "les", "de", "du", "des", "et", "ou",
+        "dans", "avec", "pour", "sur", "par", "sans", "sous", "entre"
+    }
+    
+    english_words = {
+        "hello", "hi", "thanks", "thank", "you", "yes", "no", "how", "what", 
+        "when", "where", "why", "who", "the", "a", "an", "and", "or", "but",
+        "i", "me", "my", "we", "us", "our", "he", "she", "it", "they", "them",
+        "in", "on", "at", "to", "for", "with", "by", "from", "about", "into"
+    }
+    
+    # Check for explicit language indicators
+    french_count = sum(1 for word in words if word in french_words)
+    english_count = sum(1 for word in words if word in english_words)
+    
+    if french_count > 0 and french_count >= english_count:
+        logger.debug(f"Detected French words in: {text}")
+        return "fr"
+    elif english_count > 0:
+        logger.debug(f"Detected English words in: {text}")
         return "en"
     
-    if not text or len(text.strip()) < 3:
-        logger.debug("Text too short for reliable language detection, defaulting to English")
-        return "en"
+    # Fallback to langdetect if available
+    if LANGDETECT_AVAILABLE:
+        try:
+            detected = detect(text.strip())
+            normalized = normalize_language_code(detected)
+            
+            # Validate detection for short texts
+            if len(words) <= 2:
+                # Only accept common languages for short messages
+                common_languages = {"fr", "en", "es", "de", "it", "pt", "nl"}
+                if normalized not in common_languages:
+                    logger.debug(f"Short text detected as uncommon language {normalized}, falling back to {default_language}")
+                    normalized = default_language
+            
+            logger.debug(f"langdetect result: {detected} -> normalized: {normalized}")
+            return normalized
+        except LangDetectException as e:
+            logger.debug(f"Language detection failed: {e}, defaulting to {default_language}")
+        except Exception as e:
+            logger.warning(f"Unexpected error in language detection: {e}, defaulting to {default_language}")
+    else:
+        logger.warning(f"langdetect not available, using fallback detection")
     
-    try:
-        detected = detect(text.strip())
-        normalized = normalize_language_code(detected)
-        logger.debug(f"Detected language: {detected} -> normalized: {normalized}")
-        return normalized
-    except LangDetectException as e:
-        logger.debug(f"Language detection failed: {e}, defaulting to English")
-        return "en"
-    except Exception as e:
-        logger.warning(f"Unexpected error in language detection: {e}, defaulting to English")
-        return "en"
+    # Final fallback
+    logger.debug(f"No specific language detected, defaulting to {default_language}")
+    return default_language
 
 
 def get_system_message_for_language(language: str, base_message: str = None) -> str:

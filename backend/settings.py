@@ -836,6 +836,22 @@ class _OpenAIDirectSettings(BaseSettings):
     system_message: str = "Tu es un assistant IA serviable et précis."
 
 
+class _MistralSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="MISTRAL_",
+        env_file=DOTENV_PATH,
+        extra="ignore",
+        env_ignore_empty=True
+    )
+    
+    api_key: Optional[str] = None
+    model: str = "mistral-large-latest"
+    max_tokens: int = 1000
+    temperature: float = 0.7
+    top_p: float = 1.0
+    system_message: str = "Tu es un assistant IA serviable et précis."
+
+
 class _CustomAvanteamSettings(BaseSettings):
     
     model_config = SettingsConfigDict(
@@ -875,8 +891,8 @@ class _BaseSettings(BaseSettings):
     auth_enabled: bool = True
     sanitize_answer: bool = False
     use_promptflow: bool = False
-    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, or OPENAI_DIRECT
-    available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT"]  # List of providers to expose in UI
+    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, OPENAI_DIRECT, or MISTRAL
+    available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"]  # List of providers to expose in UI
     
     @field_validator('available_llm_providers', mode='before')
     @classmethod
@@ -884,7 +900,7 @@ class _BaseSettings(BaseSettings):
         if isinstance(comma_separated_string, str) and len(comma_separated_string) > 0:
             return parse_multi_columns(comma_separated_string)
         
-        return ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT"]
+        return ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"]
 
 
 class _AppSettings(BaseModel):
@@ -892,6 +908,7 @@ class _AppSettings(BaseModel):
     azure_openai: _AzureOpenAISettings = _AzureOpenAISettings()
     claude: _ClaudeSettings = _ClaudeSettings()
     openai_direct: _OpenAIDirectSettings = _OpenAIDirectSettings()
+    mistral: _MistralSettings = _MistralSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
     response: _ResponseSettings = _ResponseSettings()

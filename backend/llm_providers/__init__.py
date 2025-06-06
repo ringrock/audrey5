@@ -39,6 +39,7 @@ from .models import StandardResponse, StandardResponseAdapter
 from .azure_openai import AzureOpenAIProvider
 from .claude import ClaudeProvider
 from .openai_direct import OpenAIDirectProvider
+from .mistral import MistralProvider
 
 
 class LLMProviderFactory:
@@ -53,6 +54,7 @@ class LLMProviderFactory:
     - AZURE_OPENAI: Azure OpenAI services
     - CLAUDE: Anthropic Claude AI
     - OPENAI_DIRECT: Direct OpenAI API access
+    - MISTRAL: Mistral AI services
     
     Future providers can be easily added by:
     1. Implementing the LLMProvider interface
@@ -65,6 +67,7 @@ class LLMProviderFactory:
         "AZURE_OPENAI": AzureOpenAIProvider,
         "CLAUDE": ClaudeProvider,
         "OPENAI_DIRECT": OpenAIDirectProvider,
+        "MISTRAL": MistralProvider,
     }
     
     @classmethod
@@ -74,7 +77,7 @@ class LLMProviderFactory:
         
         Args:
             provider_type: Type of provider to create (case-insensitive)
-                          Valid values: "AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT"
+                          Valid values: "AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"
         
         Returns:
             Initialized LLM provider instance
@@ -189,6 +192,7 @@ __all__ = [
     "AzureOpenAIProvider",
     "ClaudeProvider", 
     "OpenAIDirectProvider",
+    "MistralProvider",
 ]
 
 

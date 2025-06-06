@@ -16,6 +16,7 @@ The application supports multiple LLM providers that can be configured via envir
 - `AZURE_OPENAI`: Azure OpenAI service (default)
 - `CLAUDE`: Anthropic Claude AI
 - `OPENAI_DIRECT`: Direct OpenAI API access
+- `MISTRAL`: Mistral AI services
 
 ### Configuration Variables
 ```env
@@ -23,7 +24,7 @@ The application supports multiple LLM providers that can be configured via envir
 LLM_PROVIDER=AZURE_OPENAI
 
 # Providers available in UI (comma-separated)
-AVAILABLE_LLM_PROVIDERS=AZURE_OPENAI,CLAUDE,OPENAI_DIRECT
+AVAILABLE_LLM_PROVIDERS=AZURE_OPENAI,CLAUDE,OPENAI_DIRECT,MISTRAL
 ```
 
 ### Provider-Specific Settings
@@ -40,11 +41,20 @@ CLAUDE_MODEL=claude-3-opus-20240229
 # OpenAI Direct
 OPENAI_DIRECT_API_KEY=your_openai_key
 OPENAI_DIRECT_MODEL=gpt-4
+
+# Mistral
+MISTRAL_API_KEY=your_mistral_key
+MISTRAL_MODEL=mistral-large-latest
+MISTRAL_MAX_TOKENS=1000
+MISTRAL_TEMPERATURE=0.7
+MISTRAL_TOP_P=1.0
+MISTRAL_SYSTEM_MESSAGE="Tu es un assistant IA serviable et précis."
 ```
 
 ## Operational Guidelines
 - ATTENTION : toutes les modifications que tu fais pour faire fonctionner un LLM ne doivent pas casser le bon fonctionnement des autres LLM supportés par le module
 - Ne modifie jamais des paramètres directement dans le code si ils sont présent dans un fichier de conf comme le .env
+- pas de commit en auto, c'est moi qui te dis quand faire les commit
 
 ## Build Commands
 
