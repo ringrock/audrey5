@@ -92,8 +92,6 @@ export function CustomizationPanel() {
     text: provider
   }))
   
-  // Déterminer si on est en mode développement
-  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   
   // Fonction pour sauvegarder les préférences dans localStorage
   const savePreferencesToStorage = (preferences: CustomizationPreferences) => {
@@ -347,8 +345,8 @@ export function CustomizationPanel() {
             </MessageBar>
           </div>
           
-          {/* Section du choix du provider LLM - uniquement en mode dev */}
-          {isDevelopment && (
+          {/* Section du choix du provider LLM - seulement si plusieurs providers disponibles */}
+          {availableProviders.length > 1 && (
             <div className={styles.settingSection}>
               <h3 className={styles.settingTitle}>
                 <Icon iconName="Robot" className={styles.settingIcon} />
@@ -366,15 +364,6 @@ export function CustomizationPanel() {
                 onChange={handleLlmProviderChange}
                 className={styles.choiceGroup}
               />
-              
-              <MessageBar 
-                className={styles.infoMessage}
-                messageBarType={MessageBarType.info}
-              >
-                {currentLanguage === 'FR' 
-                  ? 'Cette option est disponible uniquement en mode développement.'
-                  : 'This option is only available in development mode.'}
-              </MessageBar>
             </div>
           )}
           
