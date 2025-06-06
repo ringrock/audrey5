@@ -23,6 +23,7 @@ from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
+from .language_detection import detect_language, get_system_message_for_language
 
 
 class AzureOpenAIProvider(LLMProvider):
@@ -114,22 +115,27 @@ class AzureOpenAIProvider(LLMProvider):
         await self.init_client()
         
         try:
+            # Detect language from user's last message
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = detect_language(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+            
             # Apply response size customization using centralized methods
             response_size = kwargs.get("response_size", "medium")
             base_max_tokens = kwargs.get("max_tokens", app_settings.azure_openai.max_tokens)
             adjusted_max_tokens = self._adjust_max_tokens_for_response_size(base_max_tokens, response_size)
             
-            # For Azure OpenAI, we handle response size instructions differently:
+            # For Azure OpenAI, we handle both language and response size instructions:
             # - If datasource is configured: inject into role_information (done in _build_azure_search_extra_body)
             # - If no datasource: enhance system message normally
             if app_settings.datasource:
                 # Don't enhance messages here - will be handled in datasource role_information
                 enhanced_messages = messages
-                self.logger.debug("Azure OpenAI with datasource: response size instructions will be in role_information")
+                self.logger.debug("Azure OpenAI with datasource: language and response size instructions will be in role_information")
             else:
-                # No datasource - enhance system message normally
-                enhanced_messages = self._enhance_messages_with_response_size(messages, response_size)
-                self.logger.debug("Azure OpenAI without datasource: enhanced system message with response size instructions")
+                # No datasource - enhance system message with language awareness
+                enhanced_messages = self._enhance_messages_with_language_and_response_size(messages, detected_language, response_size)
+                self.logger.debug(f"Azure OpenAI without datasource: enhanced system message with {detected_language} language and {response_size} response size instructions")
             
             # Build request parameters with defaults from settings
             model_args = {
@@ -144,10 +150,10 @@ class AzureOpenAIProvider(LLMProvider):
             }
             
             # Add Azure Search integration via data_sources (Azure OpenAI "On Your Data")
-            extra_body = self._build_azure_search_extra_body(**kwargs)
+            extra_body = self._build_azure_search_extra_body(detected_language=detected_language, **kwargs)
             if extra_body:
                 model_args["extra_body"] = extra_body
-                self.logger.debug("Added Azure Search data_sources to request")
+                self.logger.debug("Added Azure Search data_sources to request with multilingual support")
             
             # Add optional parameters if provided
             if "tools" in kwargs:
@@ -244,14 +250,26 @@ class AzureOpenAIProvider(LLMProvider):
                 **config_kwargs
             )
             
-            # CRITICAL: Inject response size instructions into role_information for Azure OpenAI On Your Data
+            # CRITICAL: Inject both language and response size instructions into role_information for Azure OpenAI On Your Data
+            detected_language = kwargs.get("detected_language", "en")
             response_size = kwargs.get("response_size", "medium")
-            if response_size != "medium" and "parameters" in datasource_config:
+            
+            if "parameters" in datasource_config:
+                # Get base role information or use default
                 base_role_info = datasource_config["parameters"].get("role_information", 
                                                                    app_settings.azure_openai.system_message)
-                enhanced_role_info = self._build_response_size_instructions(base_role_info, response_size)
+                
+                # Build multilingual system message
+                multilingual_role_info = get_system_message_for_language(detected_language, base_role_info)
+                
+                # Add response size instructions if specified
+                if response_size != "medium":
+                    enhanced_role_info = self._build_response_size_instructions(multilingual_role_info, response_size)
+                else:
+                    enhanced_role_info = multilingual_role_info
+                
                 datasource_config["parameters"]["role_information"] = enhanced_role_info
-                self.logger.debug(f"Enhanced role_information with {response_size} instructions for Azure OpenAI")
+                self.logger.debug(f"Enhanced role_information with {detected_language} language and {response_size} instructions for Azure OpenAI")
             
             # Build the extra_body with data_sources
             extra_body = {

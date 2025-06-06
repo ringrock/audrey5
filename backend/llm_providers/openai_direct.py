@@ -34,6 +34,8 @@ from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
+from .language_detection import detect_language, get_system_message_for_language
+from .i18n import get_documents_header
 
 
 class OpenAIDirectProvider(LLMProvider):
@@ -118,8 +120,13 @@ class OpenAIDirectProvider(LLMProvider):
         await self.init_client()
         
         try:
+            # Detect language from user's last message
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = detect_language(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+            
             # Convert OpenAI messages and enhance with Azure Search if configured
-            enhanced_messages = await self._enhance_with_search_context(messages, **kwargs)
+            enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
             
             # Use centralized max_tokens adjustment
             response_size = kwargs.get("response_size", "medium")
@@ -284,26 +291,29 @@ class OpenAIDirectProvider(LLMProvider):
     async def _enhance_with_search_context(
         self, 
         messages: List[Dict[str, Any]], 
+        detected_language: str = "en",
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Enhance OpenAI messages with Azure Search context if configured.
+        Enhance OpenAI messages with Azure Search context if configured, with multilingual support.
         
         Args:
             messages: Messages in OpenAI format
+            detected_language: Detected language code for response localization
             **kwargs: Additional parameters including search configuration
             
         Returns:
-            Enhanced messages with search context and system message
+            Enhanced messages with search context and multilingual system message
         """
         # Start with a copy of messages
         enhanced_messages = messages.copy()
         
-        # Add system message with response size preference using centralized method
+        # Add system message with language awareness and response size preference using centralized method
         base_system_message = getattr(app_settings.openai_direct, 'system_message', 
                                      "Tu es un assistant IA serviable et précis.")
+        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
         response_size = kwargs.get("response_size", "medium")
-        system_message = self._build_response_size_instructions(base_system_message, response_size)
+        system_message = self._build_response_size_instructions(multilingual_system_message, response_size)
         
         # Check if we need to perform Azure Search
         search_context = ""
@@ -330,11 +340,14 @@ class OpenAIDirectProvider(LLMProvider):
                     search_context, citations = build_search_context(search_results)
                     self._current_search_citations = citations
         
-        # Build enhanced system message
+        # Build enhanced system message with localization
         if search_context:
+            # Get localized documents header
+            documents_header = get_documents_header(detected_language)
+            
             enhanced_system_message = f"""{system_message}
 
-Documents disponibles :
+{documents_header}
 {search_context}"""
         else:
             enhanced_system_message = system_message

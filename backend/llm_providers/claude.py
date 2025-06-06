@@ -22,6 +22,8 @@ from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
+from .language_detection import detect_language, get_system_message_for_language
+from .i18n import get_documents_header, get_user_question_prefix, get_help_request
 
 
 class ClaudeProvider(LLMProvider):
@@ -99,11 +101,16 @@ class ClaudeProvider(LLMProvider):
             # Reset citation state for new request
             self._current_search_citations = None
             
-            # Convert messages from OpenAI to Claude format
-            claude_messages = self._convert_messages_to_claude_format(messages)
+            # Detect language from user's last message
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = detect_language(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+            
+            # Convert messages from OpenAI to Claude format with language awareness
+            claude_messages = self._convert_messages_to_claude_format(messages, detected_language)
             
             # Perform Azure Search if configured and inject context
-            claude_messages = await self._enhance_with_search_context(claude_messages, **kwargs)
+            claude_messages = await self._enhance_with_search_context(claude_messages, detected_language=detected_language, **kwargs)
             
             # Use centralized max_tokens adjustment
             response_size = kwargs.get("response_size", "medium")
@@ -175,22 +182,24 @@ class ClaudeProvider(LLMProvider):
     async def _enhance_with_search_context(
         self, 
         claude_messages: List[Dict[str, Any]], 
+        detected_language: str = "en",
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Enhance Claude messages with Azure Search context if configured.
+        Enhance Claude messages with Azure Search context if configured, with multilingual support.
         
         Args:
             claude_messages: Messages in Claude format
+            detected_language: Detected language code for response localization
             **kwargs: Additional parameters including search configuration
             
         Returns:
-            Enhanced messages with search context injected
+            Enhanced messages with search context injected and multilingual instructions
         """
         # Skip search if no datasource configured, but still apply response size
         if not app_settings.datasource:
             self.logger.warning("No Azure Search datasource configured - Claude will respond without search context")
-            return self._apply_response_size_only(claude_messages, kwargs.get("response_size", "medium"))
+            return self._apply_response_size_only(claude_messages, kwargs.get("response_size", "medium"), detected_language)
         
         if not claude_messages:
             self.logger.warning("No messages to enhance with search context")
@@ -218,13 +227,13 @@ class ClaudeProvider(LLMProvider):
             self.logger.warning("No search results found - Claude will respond without context")
             return claude_messages
         
-        # Inject search context into messages
+        # Inject search context into messages with language awareness
         response_size = kwargs.get("response_size", "medium")
-        return self._inject_search_context(claude_messages, search_results, response_size)
+        return self._inject_search_context(claude_messages, search_results, response_size, detected_language)
     
-    def _convert_messages_to_claude_format(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_messages_to_claude_format(self, messages: List[Dict[str, Any]], detected_language: str = "en") -> List[Dict[str, Any]]:
         """
-        Convert OpenAI message format to Claude format.
+        Convert OpenAI message format to Claude format with multilingual support.
         
         Claude has different requirements:
         - System messages are handled differently
@@ -233,17 +242,18 @@ class ClaudeProvider(LLMProvider):
         
         Args:
             messages: Messages in OpenAI format
+            detected_language: Detected language code for response localization
             
         Returns:
-            Messages converted to Claude format
+            Messages converted to Claude format with multilingual system message
         """
         claude_messages = []
-        system_message = None
+        original_system_message = None
         
         for msg in messages:
             if msg["role"] == "system":
-                # Claude handles system messages separately
-                system_message = msg["content"]
+                # Store original system message
+                original_system_message = msg["content"]
             elif msg["role"] in ["user", "assistant"]:
                 claude_messages.append({
                     "role": msg["role"],
@@ -251,23 +261,34 @@ class ClaudeProvider(LLMProvider):
                 })
             # Skip function/tool messages as Claude handles them differently
             
+        # Build multilingual system message
+        multilingual_system_message = get_system_message_for_language(detected_language, original_system_message)
+        
         # If there's a system message, prepend it to the first user message
-        if system_message and claude_messages and claude_messages[0]["role"] == "user":
-            claude_messages[0]["content"] = f"{system_message}\n\n{claude_messages[0]['content']}"
+        if multilingual_system_message and claude_messages and claude_messages[0]["role"] == "user":
+            claude_messages[0]["content"] = f"{multilingual_system_message}\n\n{claude_messages[0]['content']}"
+        elif multilingual_system_message and not claude_messages:
+            # If no user messages, create one with the system message
+            claude_messages.append({
+                "role": "user", 
+                "content": multilingual_system_message
+            })
         
         return claude_messages
     
     def _apply_response_size_only(
         self, 
         claude_messages: List[Dict[str, Any]], 
-        response_size: str = "medium"
+        response_size: str = "medium",
+        detected_language: str = "en"
     ) -> List[Dict[str, Any]]:
         """
-        Apply response size preference to messages without search context.
+        Apply response size preference to messages without search context, with multilingual support.
         
         Args:
             claude_messages: Messages in Claude format
             response_size: Response size preference (veryShort, medium, comprehensive)
+            detected_language: Detected language code for response localization
             
         Returns:
             Enhanced messages with response size instructions
@@ -276,19 +297,24 @@ class ClaudeProvider(LLMProvider):
             # No modification needed for default size
             return claude_messages
         
-        # Apply response size instructions for non-medium sizes
+        # Apply response size instructions for non-medium sizes with language awareness
         updated_messages = claude_messages.copy()
         base_system_message = app_settings.claude.system_message
-        enhanced_system_message = self._build_response_size_instructions(base_system_message, response_size)
+        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
+        enhanced_system_message = self._build_response_size_instructions(multilingual_system_message, response_size)
+        
+        # Get localized user interaction text
+        user_question_prefix = get_user_question_prefix(detected_language)
+        help_request = get_help_request(detected_language)
         
         # Update the first user message to include the enhanced system message
         if updated_messages and updated_messages[0].get("role") == "user":
             original_content = updated_messages[0]['content']
-            enhanced_content = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {original_content}"
+            enhanced_content = f"{enhanced_system_message}\n\n{user_question_prefix} {original_content}"
             updated_messages[0]["content"] = enhanced_content
         else:
             # If no user message, prepend as a system instruction
-            enhanced_content = f"{enhanced_system_message}\n\nVeuillez m'aider avec la question suivante."
+            enhanced_content = f"{enhanced_system_message}\n\n{help_request}"
             updated_messages.insert(0, {
                 "role": "user",
                 "content": enhanced_content
@@ -316,17 +342,20 @@ class ClaudeProvider(LLMProvider):
         self, 
         claude_messages: List[Dict[str, Any]], 
         search_results: List[Dict[str, Any]],
-        response_size: str = "medium"
+        response_size: str = "medium",
+        detected_language: str = "en"
     ) -> List[Dict[str, Any]]:
         """
-        Inject Azure Search results into Claude message context.
+        Inject Azure Search results into Claude message context with multilingual support.
         
         Args:
             claude_messages: Messages in Claude format
             search_results: Documents from Azure Search
+            response_size: Response size preference
+            detected_language: Detected language code for response localization
             
         Returns:
-            Enhanced messages with search context
+            Enhanced messages with search context and multilingual instructions
         """
         # Build context and citations from search results
         search_context, citations = build_search_context(search_results)
@@ -338,13 +367,17 @@ class ClaudeProvider(LLMProvider):
         # Store citations for use in response formatting
         self._current_search_citations = citations
         
-        # Build enhanced system message with search context and response size preference  
+        # Build enhanced system message with search context, language awareness and response size preference  
         base_system_message = app_settings.claude.system_message
-        system_with_size = self._build_response_size_instructions(base_system_message, response_size)
+        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
+        system_with_size = self._build_response_size_instructions(multilingual_system_message, response_size)
+        
+        # Get localized documents header
+        documents_header = get_documents_header(detected_language)
         
         enhanced_system_message = f"""{system_with_size}
 
-Documents disponibles :
+{documents_header}
 {search_context}"""
         
         # Update the first user message to include the enhanced system message

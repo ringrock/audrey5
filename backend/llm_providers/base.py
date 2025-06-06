@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, AsyncGenerator, Union
 
 from .models import StandardResponse, StandardResponseAdapter
+from .language_detection import get_system_message_for_language
 
 
 class LLMProvider(ABC):
@@ -115,6 +116,54 @@ class LLMProvider(ABC):
             enhanced_messages.insert(0, {
                 "role": "system",
                 "content": enhanced_system_message
+            })
+        
+        return enhanced_messages
+    
+    def _enhance_messages_with_language_and_response_size(
+        self, 
+        messages: List[Dict[str, Any]], 
+        detected_language: str,
+        response_size: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Enhance messages with both language awareness and response size instructions.
+        
+        Args:
+            messages: Original message list
+            detected_language: Detected language code for response localization
+            response_size: Response size preference (veryShort, medium, comprehensive)
+            
+        Returns:
+            Enhanced message list with multilingual system message and response size instructions
+        """
+        enhanced_messages = messages.copy()
+        
+        # Find or create system message
+        system_message_idx = None
+        for i, msg in enumerate(enhanced_messages):
+            if msg.get("role") == "system":
+                system_message_idx = i
+                break
+        
+        # Get original system message content
+        original_content = ""
+        if system_message_idx is not None:
+            original_content = enhanced_messages[system_message_idx].get("content", "")
+        
+        # Build multilingual system message
+        multilingual_content = get_system_message_for_language(detected_language, original_content)
+        
+        # Add response size instructions
+        enhanced_content = self._build_response_size_instructions(multilingual_content, response_size)
+        
+        # Update or create system message
+        if system_message_idx is not None:
+            enhanced_messages[system_message_idx]["content"] = enhanced_content
+        else:
+            enhanced_messages.insert(0, {
+                "role": "system",
+                "content": enhanced_content
             })
         
         return enhanced_messages
