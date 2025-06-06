@@ -108,21 +108,22 @@ def detect_language(text: str) -> str:
     return default_language
 
 
-def get_system_message_for_language(language: str, base_message: str = None) -> str:
+def get_system_message_for_language(language: str, base_message: str = None, response_size: str = "medium") -> str:
     """
-    Get a localized system message for the specified language.
+    Get a localized system message for the specified language with response size instructions.
     
     Args:
         language: Two-letter language code (ISO 639-1)
         base_message: Optional base message to extend with language instructions
+        response_size: Response size preference (veryShort, medium, comprehensive)
         
     Returns:
-        Localized system message with language-specific instructions
+        Localized system message with language-specific and response size instructions
         
     Note:
         - Always includes explicit instruction to respond in the user's language
-        - Maintains consistency across all LLM providers
-        - Falls back to English for unsupported languages
+        - Maintains original business logic and citation instructions
+        - Adds response size constraints when specified
     """
     
     # Language-specific response instructions
@@ -173,13 +174,30 @@ def get_system_message_for_language(language: str, base_message: str = None) -> 
     }
     
     # Get the language-specific instruction
-    instruction = language_instructions.get(language, language_instructions["en"])
+    language_instruction = language_instructions.get(language, language_instructions["en"])
     
-    # If a base message is provided, combine it with the language instruction
-    if base_message:
-        return f"{instruction}\n\n{base_message}"
+    # Add response size instruction if not medium (localized by language)
+    response_instruction = ""
+    if response_size == "veryShort":
+        if language == "fr":
+            response_instruction = " IMPORTANT: Répondez de manière très concise en 1-2 phrases complètes maximum. Terminez votre réponse par un point final quand vous avez donné l'essentiel."
+        else:
+            response_instruction = " IMPORTANT: Respond very concisely with 1-2 complete sentences maximum. End your response when you have given the essential information."
+    elif response_size == "comprehensive":
+        if language == "fr":
+            response_instruction = " IMPORTANT: Fournissez des réponses détaillées et complètes avec des explications approfondies, des exemples et du contexte supplémentaire."
+        else:
+            response_instruction = " IMPORTANT: Provide detailed and comprehensive responses with in-depth explanations, examples, and additional context."
     
-    return instruction
+    # Combine language and response size instructions
+    combined_instruction = language_instruction + response_instruction
+    
+    # If a base message is provided, combine it with the enhanced instruction
+    # IMPORTANT: Preserve the original base message which contains critical business logic
+    if base_message and base_message.strip():
+        return f"{base_message}\n\nIMPORTANT INSTRUCTION: {combined_instruction}"
+    
+    return combined_instruction
 
 
 # Functions now imported from i18n module:

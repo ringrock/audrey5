@@ -97,6 +97,8 @@ class ClaudeProvider(LLMProvider):
         """
         await self.init_client()
         
+        self.logger.debug(f"Claude: send_request called with stream={stream}")
+        
         try:
             # Reset citation state for new request
             self._current_search_citations = None
@@ -109,8 +111,12 @@ class ClaudeProvider(LLMProvider):
             # Convert messages from OpenAI to Claude format with language awareness
             claude_messages = self._convert_messages_to_claude_format(messages, detected_language)
             
+            # About to enhance with search context
+            
             # Perform Azure Search if configured and inject context
             claude_messages = await self._enhance_with_search_context(claude_messages, detected_language=detected_language, **kwargs)
+            
+            # Search context enhancement completed
             
             # Use centralized max_tokens adjustment
             response_size = kwargs.get("response_size", "medium")
@@ -134,6 +140,9 @@ class ClaudeProvider(LLMProvider):
                 request_body["stop_sequences"] = stop_sequences
             
             self.logger.debug(f"Claude API request: stream={stream}, messages={len(claude_messages)}")
+            
+            # Log message count for debugging
+            self.logger.debug(f"Claude: sending {len(claude_messages)} messages to API")
             
             # Configure request headers
             headers = {
@@ -196,10 +205,15 @@ class ClaudeProvider(LLMProvider):
         Returns:
             Enhanced messages with search context injected and multilingual instructions
         """
+        # Check datasource configuration
+        self.logger.debug(f"Claude: datasource configured = {bool(app_settings.datasource)}")
+        
         # Skip search if no datasource configured, but still apply response size
         if not app_settings.datasource:
-            self.logger.warning("No Azure Search datasource configured - Claude will respond without search context")
+            self.logger.debug("Claude: No Azure Search datasource configured - responding without search context")
             return self._apply_response_size_only(claude_messages, kwargs.get("response_size", "medium"), detected_language)
+        
+        self.logger.info(f"Claude: Azure Search datasource IS configured, proceeding with search")
         
         if not claude_messages:
             self.logger.warning("No messages to enhance with search context")
@@ -211,17 +225,24 @@ class ClaudeProvider(LLMProvider):
             self.logger.warning("No user query found for search")
             return claude_messages
         
-        self.logger.debug(f"Performing Azure Search for query: '{user_query}'")
+        self.logger.debug(f"Claude: Performing Azure Search for query: '{user_query[:50]}...'")
+        self.logger.debug(f"Claude: documents_count parameter: {kwargs.get('documents_count')}")
         
         # Perform search
-        search_results = await self.search_service.search_documents(
-            query=user_query,
-            top_k=kwargs.get("documents_count"),
-            filters=kwargs.get("search_filters"),
-            user_permissions=kwargs.get("user_permissions")
-        )
+        try:
+            # Calling Azure Search service
+            search_results = await self.search_service.search_documents(
+                query=user_query,
+                top_k=kwargs.get("documents_count"),
+                filters=kwargs.get("search_filters"),
+                user_permissions=kwargs.get("user_permissions")
+            )
+            self.logger.debug(f"Claude: search_documents completed successfully")
+        except Exception as e:
+            self.logger.error(f"Claude: search_documents FAILED: {e}")
+            search_results = []
         
-        self.logger.debug(f"Azure Search returned {len(search_results) if search_results else 0} results")
+        self.logger.debug(f"Claude: Azure Search returned {len(search_results) if search_results else 0} results")
         
         if not search_results:
             self.logger.warning("No search results found - Claude will respond without context")
@@ -261,7 +282,7 @@ class ClaudeProvider(LLMProvider):
                 })
             # Skip function/tool messages as Claude handles them differently
             
-        # Build multilingual system message
+        # Build multilingual system message (response size will be handled later in enhance_with_search_context)
         multilingual_system_message = get_system_message_for_language(detected_language, original_system_message)
         
         # If there's a system message, prepend it to the first user message
@@ -300,8 +321,7 @@ class ClaudeProvider(LLMProvider):
         # Apply response size instructions for non-medium sizes with language awareness
         updated_messages = claude_messages.copy()
         base_system_message = app_settings.claude.system_message
-        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
-        enhanced_system_message = self._build_response_size_instructions(multilingual_system_message, response_size)
+        enhanced_system_message = get_system_message_for_language(detected_language, base_system_message, response_size)
         
         # Get localized user interaction text
         user_question_prefix = get_user_question_prefix(detected_language)
@@ -366,11 +386,11 @@ class ClaudeProvider(LLMProvider):
         
         # Store citations for use in response formatting
         self._current_search_citations = citations
+        self.logger.debug(f"Claude: stored {len(citations)} citations for response formatting")
         
         # Build enhanced system message with search context, language awareness and response size preference  
         base_system_message = app_settings.claude.system_message
-        multilingual_system_message = get_system_message_for_language(detected_language, base_system_message)
-        system_with_size = self._build_response_size_instructions(multilingual_system_message, response_size)
+        system_with_size = get_system_message_for_language(detected_language, base_system_message, response_size)
         
         # Get localized documents header
         documents_header = get_documents_header(detected_language)
@@ -421,6 +441,10 @@ class ClaudeProvider(LLMProvider):
                 timeout=300.0
             ) as response:
                 self.logger.debug(f"Claude streaming response status: {response.status_code}")
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    self.logger.error(f"Claude API error {response.status_code}: {error_text.decode()}")
+                    self.logger.error(f"Request body size: {len(str(request_body))} characters")
                 response.raise_for_status()
                 
                 async for chunk in self._stream_claude_response(response):

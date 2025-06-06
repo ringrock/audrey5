@@ -259,14 +259,11 @@ class AzureOpenAIProvider(LLMProvider):
                 base_role_info = datasource_config["parameters"].get("role_information", 
                                                                    app_settings.azure_openai.system_message)
                 
-                # Build multilingual system message
-                multilingual_role_info = get_system_message_for_language(detected_language, base_role_info)
+                # Build multilingual system message with response size instructions
+                multilingual_role_info = get_system_message_for_language(detected_language, base_role_info, response_size)
                 
-                # Add response size instructions if specified
-                if response_size != "medium":
-                    enhanced_role_info = self._build_response_size_instructions(multilingual_role_info, response_size)
-                else:
-                    enhanced_role_info = multilingual_role_info
+                # The response size instructions are already included in multilingual_role_info
+                enhanced_role_info = multilingual_role_info
                 
                 datasource_config["parameters"]["role_information"] = enhanced_role_info
                 self.logger.debug(f"Enhanced role_information with {detected_language} language and {response_size} instructions for Azure OpenAI")
