@@ -10,6 +10,9 @@
     0px 0px 2px rgba(0, 0, 0, 0.12);
   border-radius: 5.419px;
   margin-bottom: 60px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .answerText {
@@ -63,11 +66,15 @@
 }
 
 .citationWrapper {
-  margin-top: 8;
-  /* display: flex; */
-  flex-flow: wrap column;
-  max-height: 150px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
   gap: 4px;
+  overflow-y: auto;
+  overflow-x: visible; /* Permet l'affichage des dropdowns */
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .citationContainer {
@@ -87,14 +94,16 @@
   border: 1px solid #d1d1d1;
   border-radius: 4px;
 
-  flex-shrink: 0; /* Empêche la réduction du conteneur citation */
-  width: 300px; /* Fixez une largeur constante pour aligner les boutons */
-  max-width: 300px; /* Assurez-vous que les citations ne débordent pas */
+  flex-shrink: 0;
+  width: calc(100% - 30px);
+  max-width: calc(100% - 100px);
+  min-width: 150px;
   overflow: hidden;
-  text-overflow: ellipsis; /* Ajoute "..." pour les longues citations */
-  white-space: nowrap; /* Empêche les retours à la ligne */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
 
-  position:relative;
+  position: relative;
 }
 
 .citationContainer:hover {
@@ -202,11 +211,14 @@ sup {
   }
 
   .citationWrapper {
-    max-height: max-content;
+    max-height: 400px; /* Plus de hauteur sur mobile */
   }
 
   .citationContainer {
-    margin-left: 0;
+    margin-left: 5px;
+    width: calc(100% - 25px);
+    max-width: calc(100% - 25px);
+    min-width: 120px;
   }
 
   .answerDisclaimer {
@@ -294,8 +306,9 @@ sup {
   border: 1px solid #ccc;
   border-radius: 5px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  z-index: 10;
+  z-index: 9999; /* Z-index très élevé */
   width: 200px;
+  max-width: 300px;
 }
 
 /* Flèche dropdown */
@@ -354,13 +367,25 @@ sup {
 }
 
 
+@media (max-width: 768px) {
+  .citationContainer {
+    margin-left: 5px;
+    width: calc(100% - 25px);
+    max-width: calc(100% - 25px);
+    min-width: 100px;
+  }
+}
+
 @media (max-width: 600px) {
   .hideOnSmall {
     display: none !important;
   }
 
   .dropdownMenu {
-
     width: auto;
+  }
+  
+  .citationWrapper {
+    max-height: 350px;
   }
 }

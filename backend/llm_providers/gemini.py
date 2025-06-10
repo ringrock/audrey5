@@ -193,9 +193,14 @@ class GeminiProvider(LLMProvider):
                 self.logger.debug(f"Performing Azure Search for query: '{user_query}'")
                 
                 # Perform search
+                documents_count = kwargs.get("documents_count")
+                print(f"🔍 Recherche Azure Search:")
+                print(f"   - Requête: '{user_query}'")
+                print(f"   - Nombre de documents demandés: {documents_count}")
+                
                 search_results = await self.search_service.search_documents(
                     query=user_query,
-                    top_k=kwargs.get("documents_count"),
+                    top_k=documents_count,
                     filters=kwargs.get("search_filters"),
                     user_permissions=kwargs.get("user_permissions")
                 )
@@ -209,6 +214,10 @@ class GeminiProvider(LLMProvider):
         
         # Apply response size and language preferences to system message
         response_size = kwargs.get("response_size", "medium")
+        print(f"📝 Configuration du message système:")
+        print(f"   - Taille de réponse: {response_size}")
+        print(f"   - Langue détectée: {detected_language}")
+        
         base_system_message = getattr(app_settings.gemini, 'system_message', 
                                      "You are a helpful and accurate AI assistant.")
         system_message = get_system_message_for_language(detected_language, base_system_message, response_size)

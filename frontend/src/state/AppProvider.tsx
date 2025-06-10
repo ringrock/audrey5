@@ -115,6 +115,33 @@ type AppStateProviderProps = {
 export const AppStateProvider: React.FC<AppStateProviderProps> = ({ children }) => {
   const [state, dispatch] = useReducer(appStateReducer, initialState)
 
+  // Load customization preferences from localStorage on startup
+  useEffect(() => {
+    const loadPreferencesFromStorage = (): CustomizationPreferences | null => {
+      try {
+        const saved = localStorage.getItem('userCustomizationPreferences')
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed && typeof parsed === 'object') {
+            return {
+              responseSize: parsed.responseSize || 'medium',
+              documentsCount: typeof parsed.documentsCount === 'number' ? parsed.documentsCount : 5,
+              llmProvider: parsed.llmProvider || 'AZURE_OPENAI'
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load customization preferences from localStorage:', error)
+      }
+      return null
+    }
+
+    const savedPreferences = loadPreferencesFromStorage()
+    if (savedPreferences) {
+      dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: savedPreferences })
+    }
+  }, [])
+
   useEffect(() => {
     // Check for cosmosdb config and fetch initial data here
     const fetchChatHistory = async (offset = 0): Promise<Conversation[] | null> => {
