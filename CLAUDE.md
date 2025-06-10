@@ -55,6 +55,7 @@ MISTRAL_SYSTEM_MESSAGE="Tu es un assistant IA serviable et précis."
 - ATTENTION : toutes les modifications que tu fais pour faire fonctionner un LLM ne doivent pas casser le bon fonctionnement des autres LLM supportés par le module
 - Ne modifie jamais des paramètres directement dans le code si ils sont présent dans un fichier de conf comme le .env
 - pas de commit en auto, c'est moi qui te dis quand faire les commit
+- je construis toujours le frontend moi-même
 
 ## Build Commands
 
