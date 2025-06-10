@@ -71,9 +71,12 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     const questionText = question.trim()
     const questionTest: ChatMessage["content"] = base64Image ? [{ type: "text", text: questionText }, { type: "image_url", image_url: { url: base64Image } }] : questionText;
 
-    // Add to history if it's a new unique question
-    if (questionText && !history.includes(questionText)) {
-      const newHistory = [questionText, ...history].slice(0, 50) // Keep last 50 questions
+    // Add to history or move to top if it already exists
+    if (questionText) {
+      // Remove from existing position if it exists
+      const filteredHistory = history.filter(item => item !== questionText)
+      // Add to beginning
+      const newHistory = [questionText, ...filteredHistory].slice(0, 50) // Keep last 50 questions
       setHistory(newHistory)
       
       // Save to localStorage
