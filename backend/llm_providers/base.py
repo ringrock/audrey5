@@ -45,7 +45,7 @@ class LLMProvider(ABC):
         Get max_tokens based on provider and response size preference.
         
         Args:
-            provider_name: Name of the LLM provider (azure_openai, claude, openai_direct, mistral)
+            provider_name: Name of the LLM provider (azure_openai, claude, openai_direct, mistral, gemini)
             response_size: Response size preference (veryShort, medium, comprehensive)
             
         Returns:

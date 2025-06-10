@@ -860,6 +860,24 @@ class _MistralSettings(BaseSettings):
     response_comprehensive_max_tokens: int
 
 
+class _GeminiSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="GEMINI_",
+        env_file=DOTENV_PATH,
+        extra="ignore",
+        env_ignore_empty=True
+    )
+    
+    api_key: Optional[str] = None
+    model: str
+    temperature: float
+    top_p: float
+    system_message: str
+    response_very_short_max_tokens: int
+    response_normal_max_tokens: int
+    response_comprehensive_max_tokens: int
+
+
 class _CustomAvanteamSettings(BaseSettings):
     
     model_config = SettingsConfigDict(
@@ -889,8 +907,8 @@ class _BaseSettings(BaseSettings):
     auth_enabled: bool = True
     sanitize_answer: bool = False
     use_promptflow: bool = False
-    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, OPENAI_DIRECT, or MISTRAL
-    available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"]  # List of providers to expose in UI
+    llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, OPENAI_DIRECT, MISTRAL, or GEMINI
+    available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL", "GEMINI"]  # List of providers to expose in UI
     
     @field_validator('available_llm_providers', mode='before')
     @classmethod
@@ -898,7 +916,7 @@ class _BaseSettings(BaseSettings):
         if isinstance(comma_separated_string, str) and len(comma_separated_string) > 0:
             return parse_multi_columns(comma_separated_string)
         
-        return ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"]
+        return ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL", "GEMINI"]
 
 
 class _AppSettings(BaseModel):
@@ -907,6 +925,7 @@ class _AppSettings(BaseModel):
     claude: _ClaudeSettings = _ClaudeSettings()
     openai_direct: _OpenAIDirectSettings = _OpenAIDirectSettings()
     mistral: _MistralSettings = _MistralSettings()
+    gemini: _GeminiSettings = _GeminiSettings()
     search: _SearchCommonSettings = _SearchCommonSettings()
     ui: Optional[_UiSettings] = _UiSettings()
     custom_avanteam_settings: _CustomAvanteamSettings = _CustomAvanteamSettings()

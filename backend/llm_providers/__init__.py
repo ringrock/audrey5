@@ -40,6 +40,7 @@ from .azure_openai import AzureOpenAIProvider
 from .claude import ClaudeProvider
 from .openai_direct import OpenAIDirectProvider
 from .mistral import MistralProvider
+from .gemini import GeminiProvider
 
 
 class LLMProviderFactory:
@@ -55,6 +56,7 @@ class LLMProviderFactory:
     - CLAUDE: Anthropic Claude AI
     - OPENAI_DIRECT: Direct OpenAI API access
     - MISTRAL: Mistral AI services
+    - GEMINI: Google Gemini AI services
     
     Future providers can be easily added by:
     1. Implementing the LLMProvider interface
@@ -68,6 +70,7 @@ class LLMProviderFactory:
         "CLAUDE": ClaudeProvider,
         "OPENAI_DIRECT": OpenAIDirectProvider,
         "MISTRAL": MistralProvider,
+        "GEMINI": GeminiProvider,
     }
     
     @classmethod
@@ -77,7 +80,7 @@ class LLMProviderFactory:
         
         Args:
             provider_type: Type of provider to create (case-insensitive)
-                          Valid values: "AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL"
+                          Valid values: "AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL", "GEMINI"
         
         Returns:
             Initialized LLM provider instance
@@ -193,6 +196,7 @@ __all__ = [
     "ClaudeProvider", 
     "OpenAIDirectProvider",
     "MistralProvider",
+    "GeminiProvider",
 ]
 
 
