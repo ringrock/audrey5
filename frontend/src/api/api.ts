@@ -442,3 +442,43 @@ export const historyMessageFeedback = async (messageId: string, feedback: string
     })
   return response
 }
+
+export const getHelpContent = async (lang: string = "FR"): Promise<any> => {
+  const response = await fetch(`/help_content?lang=${lang}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json"
+    }
+  })
+
+  return await response.json()
+}
+
+export interface DocumentUploadResponse {
+  success: boolean
+  text?: string
+  error?: string
+  file_info?: {
+    name: string
+    size: number
+    type?: string
+    text_length?: number
+  }
+}
+
+export const uploadDocument = async (file: File): Promise<DocumentUploadResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await fetch('/upload-document', {
+    method: 'POST',
+    body: formData
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.error || `Upload failed with status ${response.status}`)
+  }
+
+  return await response.json()
+}

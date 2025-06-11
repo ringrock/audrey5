@@ -359,11 +359,38 @@ class OpenAIDirectProvider(LLMProvider):
         return enhanced_messages
     
     def _extract_user_query(self, messages: List[Dict[str, Any]]) -> Optional[str]:
-        """Extract the user's query from messages for search"""
+        """Extract the user's query from messages for search, handling multimodal content"""
         # Get the last user message as the search query
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                return msg.get("content", "")
+                content = msg.get("content", "")
+                
+                # Handle multimodal content (text + images)
+                if isinstance(content, list):
+                    text_parts = []
+                    has_image = False
+                    
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif part.get("type") == "image_url":
+                                has_image = True
+                    
+                    base_query = " ".join(text_parts)
+                    
+                    # Enrich query with image context if needed (same logic as Claude)
+                    if has_image and base_query:
+                        # Check if this is a help/procedure question
+                        is_help_question = any(word in base_query.lower() for word in 
+                                              ["que faire", "comment", "procédure", "aide", "urgence", "help", "how"])
+                        
+                        if is_help_question:
+                            return f"{base_query} incendie feu moteur avion procédure urgence sécurité"
+                    
+                    return base_query
+                
+                return content
         return None
     
     def _inject_citations_in_stream(self, stream_response):

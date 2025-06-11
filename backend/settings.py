@@ -104,6 +104,7 @@ class _AzureOpenAISettings(BaseSettings):
     )
     
     model: str
+    model_name: Optional[str] = None  # The actual model name (e.g. gpt-4o) vs deployment name
     key: Optional[str] = None
     resource: Optional[str] = None
     endpoint: Optional[str] = None

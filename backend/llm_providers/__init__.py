@@ -103,9 +103,12 @@ class LLMProviderFactory:
         
         provider_class = cls._PROVIDER_REGISTRY[provider_type]
         logger = logging.getLogger("LLMProviderFactory")
-        logger.debug(f"Creating provider: {provider_type}")
+        logger.info(f"DEBUG FACTORY: Creating provider: {provider_type}")
+        logger.info(f"DEBUG FACTORY: Provider class: {provider_class.__name__}")
         
-        return provider_class()
+        instance = provider_class()
+        logger.info(f"DEBUG FACTORY: Created instance: {instance.__class__.__name__}")
+        return instance
     
     @classmethod
     def get_default_provider(cls) -> str:

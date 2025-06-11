@@ -289,8 +289,10 @@ const Chat = () => {
     const abortController = new AbortController()
     abortFuncs.current.unshift(abortController)
   
-    const questionContent = typeof question === 'string' ? question : [{ type: "text", text: question[0].text }, { type: "image_url", image_url: { url: question[1].image_url.url } }]
-    question = typeof question !== 'string' && question[0]?.text?.length > 0 ? question[0].text : question
+    const textPart = typeof question === 'string' ? question : Array.isArray(question) ? question.find((part): part is { type: "text"; text: string } => part.type === "text")?.text || "" : ""
+    const imagePart = typeof question !== 'string' && Array.isArray(question) ? question.find((part): part is { type: "image_url"; image_url: { url: string } } => part.type === "image_url") : null
+    const questionContent = typeof question === 'string' ? question : imagePart ? [{ type: "text", text: textPart }, { type: "image_url", image_url: imagePart.image_url }] : textPart
+    question = textPart || question
   
     const userMessage: ChatMessage = {
       id: uuid(),
@@ -427,8 +429,10 @@ const Chat = () => {
     setShowLoadingMessage(true)
     const abortController = new AbortController()
     abortFuncs.current.unshift(abortController)
-    const questionContent = typeof question === 'string' ? question : [{ type: "text", text: question[0].text }, { type: "image_url", image_url: { url: question[1].image_url.url } }]
-    question = typeof question !== 'string' && question[0]?.text?.length > 0 ? question[0].text : question
+    const textPart = typeof question === 'string' ? question : Array.isArray(question) ? question.find((part): part is { type: "text"; text: string } => part.type === "text")?.text || "" : ""
+    const imagePart = typeof question !== 'string' && Array.isArray(question) ? question.find((part): part is { type: "image_url"; image_url: { url: string } } => part.type === "image_url") : null
+    const questionContent = typeof question === 'string' ? question : imagePart ? [{ type: "text", text: textPart }, { type: "image_url", image_url: imagePart.image_url }] : textPart
+    question = textPart || question
   
     const userMessage: ChatMessage = {
       id: uuid(),
@@ -941,7 +945,14 @@ const Chat = () => {
                     {answer.role === 'user' ? (
                       <div className={styles.chatMessageUser} tabIndex={0}>
                         <div className={styles.chatMessageUserMessage}>
-                          {typeof answer.content === "string" && answer.content ? answer.content : Array.isArray(answer.content) ? <>{answer.content[0].text} <img className={styles.uploadedImageChat} src={answer.content[1].image_url.url} alt="Uploaded Preview" /></> : null}
+                          {typeof answer.content === "string" && answer.content ? answer.content : Array.isArray(answer.content) ? (
+                            <>
+                              {answer.content.find((part): part is { type: "text"; text: string } => part.type === "text")?.text}
+                              {answer.content.filter((part): part is { type: "image_url"; image_url: { url: string } } => part.type === "image_url").map((imagePart, imgIndex) => (
+                                <img key={imgIndex} className={styles.uploadedImageChat} src={imagePart.image_url.url} alt="Uploaded Preview" />
+                              ))}
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     ) : answer.role === 'assistant' ? (

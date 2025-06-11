@@ -47,6 +47,7 @@ from backend.utils import (
     convert_to_pf_format,
     format_pf_non_streaming_response,
 )
+from backend.document_processor import DocumentProcessor
 from backend.llm_providers import LLMProviderFactory
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
@@ -96,12 +97,12 @@ DEBUG = os.environ.get("DEBUG", "false")
 if DEBUG.lower() == "true":
     logging.basicConfig(level=logging.DEBUG)
 else:
-    # Configure logging to suppress Azure SDK logs but keep important logs
-    logging.basicConfig(level=logging.WARNING)
+    # Configure logging to show INFO level for debugging but suppress Azure SDK noise
+    logging.basicConfig(level=logging.DEBUG)
     
     # Set specific loggers to appropriate levels
     logging.getLogger('azure.core.pipeline.policies.http_logging_policy').setLevel(logging.WARNING)
-    logging.getLogger('azure').setLevel(logging.WARNING)
+    logging.getLogger('azure').setLevel(logging.DEBUG)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 USER_AGENT = "GitHubSampleWebApp/AsyncAzureOpenAI/1.0.0"
@@ -335,6 +336,18 @@ async def process_function_call(response):
 async def send_chat_request(request_body, request_headers, shouldStream = True):
     filtered_messages = []
     messages = request_body.get("messages", [])
+    
+    # DEBUG: Log incoming messages to see if images are present
+    logging.info(f"DEBUG: Received {len(messages)} messages in send_chat_request")
+    for i, msg in enumerate(messages):
+        logging.info(f"DEBUG: Message {i} - role: {msg.get('role')}, content type: {type(msg.get('content'))}")
+        if isinstance(msg.get('content'), list):
+            for j, part in enumerate(msg['content']):
+                logging.info(f"DEBUG: Message {i}, part {j} - type: {part.get('type')}")
+                if part.get('type') == 'image_url':
+                    image_url = part.get('image_url', {}).get('url', '')
+                    logging.info(f"DEBUG: Found image_url in send_chat_request, length: {len(image_url)}, preview: {image_url[:50]}...")
+    
     for message in messages:
         if message.get("role") != 'tool':
             filtered_messages.append(message)
@@ -359,7 +372,10 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
     
     # Use the unified LLM provider abstraction for ALL providers
     try:
+        logging.info(f"DEBUG APP: About to create provider: {provider_type}")
         provider = LLMProviderFactory.create_provider(provider_type)
+        logging.info(f"DEBUG APP: Created provider instance: {provider.__class__.__name__}")
+        logging.info(f"DEBUG APP: Provider module: {provider.__class__.__module__}")
         
         # Extract messages for all providers (they handle their own model args)
         request_messages = request_body.get("messages", [])
@@ -590,6 +606,18 @@ async def conversation_internal(request_body, request_headers, preventShouldStre
     try:
         # LogCallToAiManager(request_body)
         logging.debug(f"conversation_internal: stream={app_settings.azure_openai.stream}, use_promptflow={app_settings.base_settings.use_promptflow}, preventShouldStream={preventShouldStream}")
+
+        # DEBUG: Log incoming messages to see if images are present BEFORE processing
+        messages = request_body.get("messages", [])
+        logging.info(f"DEBUG: conversation_internal received {len(messages)} messages")
+        for i, msg in enumerate(messages):
+            logging.info(f"DEBUG: Message {i} - role: {msg.get('role')}, content type: {type(msg.get('content'))}")
+            if isinstance(msg.get('content'), list):
+                for j, part in enumerate(msg['content']):
+                    logging.info(f"DEBUG: Message {i}, part {j} - type: {part.get('type')}")
+                    if part.get('type') == 'image_url':
+                        image_url = part.get('image_url', {}).get('url', '')
+                        logging.info(f"DEBUG: Found image_url in conversation_internal, length: {len(image_url)}, preview: {image_url[:50]}...")
 
         if app_settings.azure_openai.stream and not app_settings.base_settings.use_promptflow and not preventShouldStream:
             logging.debug("Using streaming chat request")
@@ -1264,8 +1292,68 @@ async def get_help_content():
     except Exception as e:
         logging.exception("Exception in /help_content")
         return jsonify({"error": str(e)}), 500
-    
 
+
+@bp.route("/upload-document", methods=["POST"])
+async def upload_document():
+    """
+    Endpoint pour traiter l'upload de documents et extraire leur contenu textuel.
+    Supporte les formats PDF, Word (.docx) et texte (.txt).
+    """
+    if not(CheckAuthenticate(request)):
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        # Vérifier qu'un fichier a été uploadé
+        files = await request.files
+        if 'file' not in files:
+            return jsonify({
+                "success": False,
+                "error": "Aucun fichier fourni. Utilisez le champ 'file' pour l'upload."
+            }), 400
+        
+        uploaded_file = files['file']
+        if not uploaded_file.filename:
+            return jsonify({
+                "success": False,
+                "error": "Nom de fichier manquant"
+            }), 400
+        
+        # Lire le contenu du fichier
+        file_content = uploaded_file.read()
+        if not file_content:
+            return jsonify({
+                "success": False,
+                "error": "Le fichier est vide"
+            }), 400
+        
+        # Traiter le document
+        result = DocumentProcessor.process_document(
+            filename=uploaded_file.filename,
+            file_content=file_content,
+            mime_type=uploaded_file.content_type
+        )
+        
+        if result["success"]:
+            return jsonify({
+                "success": True,
+                "text": result["text"],
+                "file_info": result["file_info"]
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result["error"],
+                "file_info": result.get("file_info", {})
+            }), 400
+            
+    except Exception as e:
+        logging.error(f"Error in upload_document endpoint: {e}")
+        return jsonify({
+            "success": False,
+            "error": f"Erreur serveur lors du traitement du document: {str(e)}"
+        }), 500
+    
 
 async def generate_title(conversation_messages) -> str:
     ## make sure the messages are sorted by _ts descending

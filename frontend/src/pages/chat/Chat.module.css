@@ -370,6 +370,38 @@ a {
   border-radius: 4px;
 }
 
+.uploadedDocumentChat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 4px 8px;
+  background-color: #f3f2f1;
+  border: 1px solid #d1d1d1;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.documentChatIcon {
+  color: #605e5c;
+  font-size: 14px;
+}
+
+.documentChatName {
+  color: #323130;
+  font-weight: 500;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documentChatType {
+  color: #605e5c;
+  font-size: 11px;
+  font-weight: 400;
+}
+
 @media (max-width: 480px) {
   .chatInput {
     width: 90%;

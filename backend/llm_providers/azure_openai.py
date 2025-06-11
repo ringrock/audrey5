@@ -25,6 +25,17 @@ from .base import LLMProvider, LLMProviderInitializationError, LLMProviderReques
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .language_detection import detect_language, get_system_message_for_language
 
+# Import image processing (with fallback)
+try:
+    from backend.document_processor import DocumentProcessor, ProcessingConfig
+    IMAGE_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    logger = logging.getLogger("AzureOpenAIProvider")
+    logger.warning(f"Advanced image processing not available: {e}")
+    DocumentProcessor = None
+    ProcessingConfig = None
+    IMAGE_PROCESSING_AVAILABLE = False
+
 
 class AzureOpenAIProvider(LLMProvider):
     """
@@ -131,10 +142,16 @@ class AzureOpenAIProvider(LLMProvider):
                 # Don't enhance messages here - will be handled in datasource role_information
                 enhanced_messages = messages
                 self.logger.debug("Azure OpenAI with datasource: language and response size instructions will be in role_information")
+                
+                # Still process images even with datasource
+                enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
             else:
                 # No datasource - enhance system message with language awareness
                 enhanced_messages = self._enhance_messages_with_language_and_response_size(messages, detected_language, response_size)
                 self.logger.debug(f"Azure OpenAI without datasource: enhanced system message with {detected_language} language and {response_size} response size instructions")
+                
+                # Process images for optimal Azure OpenAI performance  
+                enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
             
             # Build request parameters with defaults from settings
             model_args = {
@@ -165,6 +182,59 @@ class AzureOpenAIProvider(LLMProvider):
                 self.logger.debug("Using manual extra_body parameter")
             
             self.logger.debug(f"Sending request to Azure OpenAI: stream={stream}, model={model_args['model']}")
+            self.logger.debug(f"Number of messages: {len(model_args.get('messages', []))}")
+            
+            # Check if model supports images and validate multimodal content
+            vision_models = ["gpt-4-vision-preview", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-turbo-vision"]
+            has_images = False
+            
+            for i, msg in enumerate(model_args.get("messages", [])):
+                if isinstance(msg.get("content"), list):
+                    self.logger.debug(f"Message {i} has multimodal content with {len(msg['content'])} parts")
+                    for j, part in enumerate(msg["content"]):
+                        if part.get("type") == "image_url":
+                            has_images = True
+                            image_url = part.get("image_url", {}).get("url", "")
+                            if image_url.startswith("data:"):
+                                # Extract format info without logging the actual data
+                                header = image_url.split(",")[0]
+                                data_size = len(image_url.split(",", 1)[1]) if "," in image_url else 0
+                                self.logger.debug(f"  Part {j}: Image {header}, data size: {data_size} chars")
+                                
+                                # Check image size (Azure OpenAI limit is around 20MB for base64)
+                                if data_size > 20000000:  # 20MB
+                                    error_msg = f"Image trop volumineuse: {data_size} caractères. Limite Azure OpenAI: ~20MB."
+                                    self.logger.error(error_msg)
+                                    raise LLMProviderRequestError(error_msg)
+                                
+                                # Check supported formats
+                                supported_formats = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+                                format_from_header = header.replace("data:", "").split(";")[0]
+                                if format_from_header not in supported_formats:
+                                    error_msg = f"Format d'image non supporté: {format_from_header}. Formats supportés: {supported_formats}"
+                                    self.logger.error(error_msg)
+                                    raise LLMProviderRequestError(error_msg)
+            
+            # Validate model supports images if images are present
+            if has_images:
+                # Use the actual model name from settings if available
+                actual_model_name = app_settings.azure_openai.model_name or model_args['model']
+                deployment_name = model_args['model']
+                
+                self.logger.info(f"Deployment: '{deployment_name}', Actual model: '{actual_model_name}'")
+                
+                # Check if the actual model supports vision
+                current_model = actual_model_name.lower()
+                
+                # If AZURE_OPENAI_MODEL_NAME is not set (deployment name == model name), allow bypass
+                if actual_model_name == deployment_name:
+                    self.logger.warning(f"AZURE_OPENAI_MODEL_NAME non configurée. Nom de déploiement utilisé: '{deployment_name}'. Support d'images assumé - vérifiez que votre déploiement utilise un modèle vision.")
+                elif not any(vision_model.lower() in current_model for vision_model in vision_models):
+                    error_msg = f"Le modèle '{actual_model_name}' (déploiement: '{deployment_name}') ne supporte pas les images. Utilisez un modèle vision comme gpt-4o, gpt-4-vision-preview, ou gpt-4-turbo."
+                    self.logger.error(error_msg)
+                    raise LLMProviderRequestError(error_msg)
+                else:
+                    self.logger.info(f"Modèle vision détecté: '{actual_model_name}' (déploiement: '{deployment_name}'). Support d'images confirmé.")
             
             # Make the request with raw response to get headers
             raw_response = await self.client.chat.completions.with_raw_response.create(**model_args)
@@ -341,6 +411,121 @@ class AzureOpenAIProvider(LLMProvider):
             choices=choices,
             usage=usage
         )
+    
+    def _process_images_for_azure_openai(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Process images in messages for optimal Azure OpenAI performance.
+        
+        Args:
+            messages: List of messages that may contain images
+            
+        Returns:
+            List of messages with optimized images
+        """
+        if not IMAGE_PROCESSING_AVAILABLE:
+            self.logger.debug("Advanced image processing not available - using original images")
+            return messages
+        
+        processed_messages = []
+        
+        for message in messages:
+            if not isinstance(message.get("content"), list):
+                # No multimodal content, add as-is
+                processed_messages.append(message)
+                continue
+            
+            # Process multimodal content
+            processed_content = []
+            for part in message["content"]:
+                if part.get("type") == "image_url":
+                    # Process image for Azure OpenAI
+                    image_url = part.get("image_url", {}).get("url", "")
+                    if image_url.startswith("data:"):
+                        try:
+                            # Extract base64 data
+                            header, raw_data = image_url.split(",", 1)
+                            
+                            # Detect content type from context
+                            content_type = self._detect_image_content_type_from_azure_context(message["content"])
+                            
+                            # Decode and process with Azure OpenAI optimizations
+                            import base64
+                            image_bytes = base64.b64decode(raw_data)
+                            
+                            # Process image for Azure OpenAI
+                            result = DocumentProcessor.process_image_for_llm(
+                                image_bytes, 
+                                provider="AZURE_OPENAI",
+                                content_type=content_type
+                            )
+                            
+                            if result["success"]:
+                                processing_result = result["processing_result"]
+                                self.logger.info(f"Azure OpenAI: Image optimized - "
+                                               f"format: {processing_result.original_format} → {processing_result.final_format}, "
+                                               f"size: {processing_result.original_size} → {processing_result.final_size}, "
+                                               f"file_size: {processing_result.file_size_mb:.2f}MB")
+                                
+                                # Create optimized data URL
+                                optimized_data_url = f"data:{processing_result.media_type};base64,{processing_result.data}"
+                                processed_content.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": optimized_data_url}
+                                })
+                            else:
+                                # Fallback to original on processing error
+                                self.logger.warning(f"Azure OpenAI image optimization failed: {result['error']}")
+                                processed_content.append(part)
+                                
+                        except Exception as e:
+                            self.logger.warning(f"Azure OpenAI image processing error: {e}")
+                            processed_content.append(part)
+                    else:
+                        # Non-data URL, add as-is
+                        processed_content.append(part)
+                else:
+                    # Non-image content, add as-is
+                    processed_content.append(part)
+            
+            # Create message with processed content
+            processed_message = message.copy()
+            processed_message["content"] = processed_content
+            processed_messages.append(processed_message)
+        
+        return processed_messages
+    
+    def _detect_image_content_type_from_azure_context(self, content_list: List[Dict[str, Any]]) -> str:
+        """
+        Detect likely image content type from Azure OpenAI message context.
+        
+        Args:
+            content_list: List of content parts including text and images
+            
+        Returns:
+            str: Detected content type for image optimization
+        """
+        # Extract all text from the content
+        text_parts = []
+        for part in content_list:
+            if part.get("type") == "text":
+                text_parts.append(part.get("text", "").lower())
+        
+        combined_text = " ".join(text_parts)
+        
+        # Analyze text for content type hints (similar to Claude but adapted for Azure OpenAI)
+        if any(keyword in combined_text for keyword in ["screenshot", "écran", "capture", "interface"]):
+            return "screenshot"
+        elif any(keyword in combined_text for keyword in ["diagramme", "schema", "graphique", "diagram", "chart", "flowchart"]):
+            return "diagram"
+        elif any(keyword in combined_text for keyword in ["texte", "text", "document", "page", "lecture", "read"]):
+            return "text"
+        elif any(keyword in combined_text for keyword in ["logo", "icône", "icon", "symbole"]):
+            return "logo"
+        elif any(keyword in combined_text for keyword in ["photo", "image", "picture", "photographie"]):
+            return "photo"
+        
+        # Default to general if no specific context detected
+        return "general"
     
     async def close(self):
         """Close the Azure OpenAI client and clean up resources."""

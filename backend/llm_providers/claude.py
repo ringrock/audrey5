@@ -24,6 +24,16 @@ from .models import StandardResponse, StandardResponseAdapter, StandardChoice, S
 from .utils import AzureSearchService, build_search_context
 from .language_detection import detect_language, get_system_message_for_language
 from .i18n import get_documents_header, get_user_question_prefix, get_help_request
+try:
+    from backend.document_processor import ImageProcessor, ProcessingConfig, create_claude_image_data, ProcessingResult
+    IMAGE_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Image processing not available: {e}")
+    ImageProcessor = None
+    ProcessingConfig = None
+    create_claude_image_data = None
+    ProcessingResult = None
+    IMAGE_PROCESSING_AVAILABLE = False
 
 
 class ClaudeProvider(LLMProvider):
@@ -52,6 +62,18 @@ class ClaudeProvider(LLMProvider):
         
         # State for handling citations in streaming responses
         self._current_search_citations = None
+        
+        # Initialize image processor for optimized Claude image handling
+        # TEMPORARY: Disable image processing for debugging
+        # if IMAGE_PROCESSING_AVAILABLE:
+        #     self.image_processor = ImageProcessor(ProcessingConfig())
+        # else:
+        #     self.image_processor = None
+        #     self.logger.warning("Advanced image processing not available - using basic processing")
+        
+        # TEMPORARILY disable image processing to test if compression is causing the issue
+        self.image_processor = None
+        self.logger.warning("DEBUG: Image processing DISABLED to test if JPEG compression is corrupting images")
     
     async def init_client(self):
         """
@@ -103,13 +125,16 @@ class ClaudeProvider(LLMProvider):
             # Reset citation state for new request
             self._current_search_citations = None
             
+            
             # Detect language from user's last message
             user_message = messages[-1]["content"] if messages else ""
             detected_language = detect_language(user_message)
             self.logger.debug(f"Detected language: {detected_language}")
             
+            
             # Convert messages from OpenAI to Claude format with language awareness
             claude_messages = self._convert_messages_to_claude_format(messages, detected_language)
+            
             
             # About to enhance with search context
             
@@ -130,6 +155,7 @@ class ClaudeProvider(LLMProvider):
                 "temperature": kwargs.get("temperature", app_settings.claude.temperature),
                 "stream": stream
             }
+            
             
             # Add optional parameters
             if kwargs.get("top_p"):
@@ -275,9 +301,11 @@ class ClaudeProvider(LLMProvider):
                 # Store original system message
                 original_system_message = msg["content"]
             elif msg["role"] in ["user", "assistant"]:
+                # Handle multimodal content (images + text) for Claude
+                content = self._convert_content_to_claude_format(msg["content"])
                 claude_messages.append({
                     "role": msg["role"],
-                    "content": msg["content"]
+                    "content": content
                 })
             # Skip function/tool messages as Claude handles them differently
             
@@ -286,7 +314,27 @@ class ClaudeProvider(LLMProvider):
         
         # If there's a system message, prepend it to the first user message
         if multilingual_system_message and claude_messages and claude_messages[0]["role"] == "user":
-            claude_messages[0]["content"] = f"{multilingual_system_message}\n\n{claude_messages[0]['content']}"
+            original_content = claude_messages[0]["content"]
+            
+            # Handle multimodal content properly
+            if isinstance(original_content, list):
+                # Find the text part and prepend system message to it
+                enhanced_content = []
+                for part in original_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        # Prepend system message to the text part
+                        enhanced_text = f"{multilingual_system_message}\n\n{part.get('text', '')}"
+                        enhanced_content.append({
+                            "type": "text",
+                            "text": enhanced_text
+                        })
+                    else:
+                        # Keep other parts (images) as-is
+                        enhanced_content.append(part)
+                claude_messages[0]["content"] = enhanced_content
+            else:
+                # Simple text content
+                claude_messages[0]["content"] = f"{multilingual_system_message}\n\n{original_content}"
         elif multilingual_system_message and not claude_messages:
             # If no user messages, create one with the system message
             claude_messages.append({
@@ -295,6 +343,171 @@ class ClaudeProvider(LLMProvider):
             })
         
         return claude_messages
+    
+    def _convert_content_to_claude_format(self, content):
+        """
+        Convert OpenAI content format to Claude format for multimodal support with optimized image processing.
+        
+        OpenAI format: [{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "data:image/..."}}]
+        Claude format: [{"type": "text", "text": "..."}, {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "..."}}]
+        
+        Args:
+            content: Content in OpenAI format (str or list)
+            
+        Returns:
+            Content in Claude format with optimized images
+        """
+        
+        # DEBUG: Log what we're converting
+        self.logger.info(f"DEBUG: _convert_content_to_claude_format called with content type: {type(content)}")
+        if isinstance(content, list):
+            self.logger.info(f"DEBUG: Content is list with {len(content)} parts")
+            for i, part in enumerate(content):
+                self.logger.info(f"DEBUG: Part {i}: {part.get('type', 'unknown type')}")
+        else:
+            self.logger.info(f"DEBUG: Content is string: {str(content)[:100]}...")
+        # If it's just a string, return as is
+        if isinstance(content, str):
+            return content
+        
+        # If it's a list (multimodal), convert each part
+        if isinstance(content, list):
+            claude_content = []
+            for part in content:
+                if part.get("type") == "text":
+                    claude_content.append({
+                        "type": "text",
+                        "text": part.get("text", "")
+                    })
+                elif part.get("type") == "image_url":
+                    # Convert OpenAI image format to Claude format with optimization
+                    image_url = part.get("image_url", {}).get("url", "")
+                    if image_url.startswith("data:"):
+                        try:
+                            # Extract media type and base64 data
+                            # Format: data:image/jpeg;base64,/9j/4AAQSkZJRgABA...
+                            header, raw_data = image_url.split(",", 1)
+                            original_media_type = header.split(";")[0].replace("data:", "")
+                            
+                            self.logger.info(f"Claude: Processing image - original type: {original_media_type}, original size: {len(raw_data)} chars")
+                            
+                            # DEBUG: Log image data preview for debugging
+                            self.logger.info(f"DEBUG: Backend received image data preview: {raw_data[:50]}...")
+                            self.logger.info(f"DEBUG: Backend image media type: {original_media_type}")
+                            self.logger.info(f"DEBUG: Backend image size chars: {len(raw_data)}")
+                            
+                            # Detect content type from text context if available
+                            content_type = self._detect_image_content_type_from_context(content)
+                            
+                            # Debug: Log detection details
+                            self.logger.info(f"Claude: Image processing debug - "
+                                           f"original_media_type: {original_media_type}, "
+                                           f"detected_content_type: {content_type}, "
+                                           f"original_size_chars: {len(raw_data)}")
+                            
+                            # Process image with Claude optimization if available
+                            if self.image_processor and IMAGE_PROCESSING_AVAILABLE:
+                                try:
+                                    # Decode base64 to bytes for processing
+                                    import base64
+                                    image_bytes = base64.b64decode(raw_data)
+                                    
+                                    # Debug: Log first 100 chars of original data
+                                    self.logger.debug(f"Claude: Original image data preview: {raw_data[:100]}...")
+                                    
+                                    # Process image for Claude optimization
+                                    processing_result = self.image_processor.process_for_claude(
+                                        image_bytes, 
+                                        content_type=content_type
+                                    )
+                                    
+                                    # Log optimization results with debug info
+                                    self.logger.info(f"Claude: Image optimized - "
+                                                   f"format: {processing_result.original_format} → {processing_result.final_format}, "
+                                                   f"size: {processing_result.original_size} → {processing_result.final_size}, "
+                                                   f"file_size: {processing_result.file_size_mb:.2f}MB, "
+                                                   f"estimated_tokens: {processing_result.estimated_tokens}")
+                                    
+                                    # Debug: Log first 100 chars of optimized data to verify it's different
+                                    self.logger.debug(f"Claude: Optimized image data preview: {processing_result.data[:100]}...")
+                                    
+                                    # Create optimized Claude image data
+                                    claude_image = create_claude_image_data(processing_result)
+                                    claude_content.append(claude_image)
+                                    
+                                except Exception as processing_error:
+                                    # Fallback to original processing if optimization fails
+                                    self.logger.warning(f"Image optimization failed, using original: {processing_error}")
+                                    self._add_original_image(claude_content, original_media_type, raw_data)
+                            else:
+                                # Use original processing when advanced image processing is not available
+                                self.logger.debug("Using basic image processing (PIL not available)")
+                                self._add_original_image(claude_content, original_media_type, raw_data)
+                                
+                        except Exception as e:
+                            self.logger.error(f"Failed to convert image format for Claude: {e}")
+                            # Skip malformed images
+                            continue
+            return claude_content
+        
+        # Fallback: return content as is
+        return content
+    
+    def _detect_image_content_type_from_context(self, content_list):
+        """
+        Detect likely image content type from surrounding text context.
+        
+        Args:
+            content_list: List of content parts including text and images
+            
+        Returns:
+            str: Detected content type for image optimization
+        """
+        # Extract all text from the content
+        text_parts = []
+        for part in content_list:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", "").lower())
+        
+        combined_text = " ".join(text_parts)
+        
+        # Analyze text for content type hints
+        if any(keyword in combined_text for keyword in ["screenshot", "écran", "capture", "interface", "twitter", "facebook", "instagram", "linkedin", "réseau social", "social media", "publication", "post", "tweet"]):
+            return "screenshot"
+        elif any(keyword in combined_text for keyword in ["diagramme", "schema", "graphique", "diagram", "chart", "flowchart"]):
+            return "diagram"
+        elif any(keyword in combined_text for keyword in ["texte", "text", "document", "page", "lecture", "read", "lire", "écrit", "écris", "contenu"]):
+            return "text"
+        elif any(keyword in combined_text for keyword in ["logo", "icône", "icon", "symbole"]):
+            return "logo"
+        elif any(keyword in combined_text for keyword in ["photo", "image", "picture", "photographie"]):
+            return "photo"
+        
+        # Default to general if no specific context detected
+        return "general"
+    
+    def _add_original_image(self, claude_content: List[Dict], media_type: str, raw_data: str):
+        """
+        Add original image data to Claude content with basic size check.
+        
+        Args:
+            claude_content: List to append image data to
+            media_type: Original media type
+            raw_data: Base64 encoded image data
+        """
+        # Check original size limit
+        if len(raw_data) > 4000000:  # ~4MB limit for base64 data
+            self.logger.warning(f"Image trop volumineuse pour Claude: {len(raw_data)} chars. Ignorée.")
+            return
+        
+        claude_content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": raw_data
+            }
+        })
     
     def _apply_response_size_only(
         self, 
@@ -329,8 +542,27 @@ class ClaudeProvider(LLMProvider):
         # Update the first user message to include the enhanced system message
         if updated_messages and updated_messages[0].get("role") == "user":
             original_content = updated_messages[0]['content']
-            enhanced_content = f"{enhanced_system_message}\n\n{user_question_prefix} {original_content}"
-            updated_messages[0]["content"] = enhanced_content
+            
+            # Handle multimodal content properly (same fix as in _convert_messages_to_claude_format)
+            if isinstance(original_content, list):
+                # Find the text part and prepend system message to it
+                enhanced_content = []
+                for part in original_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        # Prepend system message to the text part
+                        enhanced_text = f"{enhanced_system_message}\n\n{user_question_prefix} {part.get('text', '')}"
+                        enhanced_content.append({
+                            "type": "text",
+                            "text": enhanced_text
+                        })
+                    else:
+                        # Keep other parts (images) as-is
+                        enhanced_content.append(part)
+                updated_messages[0]["content"] = enhanced_content
+            else:
+                # Simple text content
+                enhanced_content = f"{enhanced_system_message}\n\n{user_question_prefix} {original_content}"
+                updated_messages[0]["content"] = enhanced_content
         else:
             # If no user message, prepend as a system instruction
             enhanced_content = f"{enhanced_system_message}\n\n{help_request}"
@@ -349,13 +581,109 @@ class ClaudeProvider(LLMProvider):
             claude_messages: Messages in Claude format
             
         Returns:
-            The last user message content for searching
+            The last user message content for searching (enriched with image context if present)
         """
         # Get the last user message as the search query
         for msg in reversed(claude_messages):
             if msg.get("role") == "user":
-                return msg.get("content", "")
+                content = msg.get("content", "")
+                
+                # Handle multimodal content
+                if isinstance(content, list):
+                    text_parts = []
+                    has_image = False
+                    
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif part.get("type") == "image":
+                                has_image = True
+                    
+                    base_query = " ".join(text_parts)
+                    
+                    # Enrich query with context (image or general enrichment)
+                    if has_image and base_query:
+                        enriched_query = self._enrich_query_with_context(base_query, has_image)
+                        if enriched_query != base_query:
+                            self.logger.info(f"Requête enrichie avec image: '{base_query[:50]}...' → '{enriched_query[:100]}...'")
+                            return enriched_query
+                    
+                    return base_query
+                
+                return content
         return None
+    
+    def _has_document_content(self, text: str) -> bool:
+        """Check if the text contains uploaded document content"""
+        return "\n\n[Document:" in text and "]\n" in text
+    
+    def _extract_keywords_from_text(self, text: str, max_keywords: int = 10) -> List[str]:
+        """Extract relevant keywords from text for search enhancement"""
+        import re
+        
+        # Remove document markers and get clean text
+        if self._has_document_content(text):
+            # Extract text after document header (new format)
+            parts = text.split("\n\n[Document:", 1)
+            if len(parts) > 1:
+                doc_parts = parts[1].split("]\n", 1)
+                if len(doc_parts) > 1:
+                    text = doc_parts[1]
+        
+        # Clean and normalize text
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        words = text.split()
+        
+        # Filter relevant keywords (remove common words, keep technical terms)
+        stop_words = {
+            'le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'et', 'ou', 'mais', 'donc', 'car',
+            'ce', 'cette', 'ces', 'il', 'elle', 'ils', 'elles', 'je', 'tu', 'nous', 'vous',
+            'que', 'qui', 'quoi', 'comment', 'pourquoi', 'où', 'quand', 'dans', 'sur', 'avec',
+            'par', 'pour', 'sans', 'sous', 'entre', 'vers', 'chez', 'depuis', 'pendant',
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+            'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after',
+            'document', 'texte', 'text', 'page', 'ligne', 'line'
+        }
+        
+        # Keep words that are longer than 2 chars and not stop words
+        keywords = [word for word in words if len(word) > 2 and word not in stop_words]
+        
+        # Remove duplicates and limit count
+        unique_keywords = list(dict.fromkeys(keywords))[:max_keywords]
+        
+        return unique_keywords
+    
+    def _enrich_query_with_context(self, base_query: str, has_image: bool) -> str:
+        """Enrich search query with context from images or documents"""
+        original_query = base_query
+        
+        # Extract the actual user question (before document content)
+        user_question = base_query
+        document_content = ""
+        
+        if self._has_document_content(base_query):
+            # Format: "Question utilisateur\n\n[Document: nom.ext]\ncontenu..."
+            # Split user question from document content
+            parts = base_query.split("\n\n[Document:", 1)
+            if len(parts) > 1:
+                user_question = parts[0].strip()
+                # Extract document content after the header
+                doc_parts = parts[1].split("]\n", 1)
+                if len(doc_parts) > 1:
+                    document_content = doc_parts[1]
+        
+        # For images, add relevant context keywords
+        if has_image:
+            # Check if this is a help/procedure question
+            is_help_question = any(word in user_question.lower() for word in 
+                                  ["que faire", "comment", "procédure", "aide", "urgence", "help", "how"])
+            
+            if is_help_question:
+                return f"{user_question} incendie feu moteur avion procédure urgence sécurité"
+        
+        return original_query
     
     def _inject_search_context(
         self, 
@@ -403,8 +731,27 @@ class ClaudeProvider(LLMProvider):
         updated_messages = claude_messages.copy()
         if updated_messages and updated_messages[0].get("role") == "user":
             original_content = updated_messages[0]['content']
-            enhanced_content = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {original_content}"
-            updated_messages[0]["content"] = enhanced_content
+            
+            # Handle multimodal content properly (same fix as other functions)
+            if isinstance(original_content, list):
+                # Find the text part and prepend system message to it
+                enhanced_content = []
+                for part in original_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        # Prepend system message to the text part
+                        enhanced_text = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {part.get('text', '')}"
+                        enhanced_content.append({
+                            "type": "text",
+                            "text": enhanced_text
+                        })
+                    else:
+                        # Keep other parts (images) as-is
+                        enhanced_content.append(part)
+                updated_messages[0]["content"] = enhanced_content
+            else:
+                # Simple text content
+                enhanced_content = f"{enhanced_system_message}\n\nQuestion de l'utilisateur : {original_content}"
+                updated_messages[0]["content"] = enhanced_content
         else:
             # If no user message, prepend as a system instruction
             enhanced_content = f"{enhanced_system_message}\n\nVeuillez m'aider avec la question suivante."

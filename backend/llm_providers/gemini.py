@@ -251,12 +251,108 @@ class GeminiProvider(LLMProvider):
         return enhanced_messages
     
     def _extract_user_query(self, messages: List[Dict[str, Any]]) -> Optional[str]:
-        """Extract the user's query from messages for search"""
+        """Extract the user's query from messages for search, enriching with image context if present"""
         # Get the last user message as the search query
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                return msg.get("content", "")
+                content = msg.get("content", "")
+                
+                # Handle multimodal content
+                if isinstance(content, list):
+                    text_parts = []
+                    has_image = False
+                    
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif part.get("type") == "image_url":
+                                has_image = True
+                    
+                    base_query = " ".join(text_parts)
+                    
+                    # Enrich query with context (image or general enrichment)
+                    if has_image and base_query:
+                        enriched_query = self._enrich_query_with_context(base_query, has_image)
+                        if enriched_query != base_query:
+                            self.logger.info(f"Requête enrichie avec image: '{base_query[:50]}...' → '{enriched_query[:100]}...'")
+                            return enriched_query
+                    
+                    return base_query
+                
+                return content
         return None
+    
+    def _has_document_content(self, text: str) -> bool:
+        """Check if the text contains uploaded document content"""
+        return "\n\n[Document:" in text and "]\n" in text
+    
+    def _extract_keywords_from_text(self, text: str, max_keywords: int = 10) -> List[str]:
+        """Extract relevant keywords from text for search enhancement"""
+        import re
+        
+        # Remove document markers and get clean text
+        if self._has_document_content(text):
+            # Extract text after document header (new format)
+            parts = text.split("\n\n[Document:", 1)
+            if len(parts) > 1:
+                doc_parts = parts[1].split("]\n", 1)
+                if len(doc_parts) > 1:
+                    text = doc_parts[1]
+        
+        # Clean and normalize text
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        words = text.split()
+        
+        # Filter relevant keywords (remove common words, keep technical terms)
+        stop_words = {
+            'le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'et', 'ou', 'mais', 'donc', 'car',
+            'ce', 'cette', 'ces', 'il', 'elle', 'ils', 'elles', 'je', 'tu', 'nous', 'vous',
+            'que', 'qui', 'quoi', 'comment', 'pourquoi', 'où', 'quand', 'dans', 'sur', 'avec',
+            'par', 'pour', 'sans', 'sous', 'entre', 'vers', 'chez', 'depuis', 'pendant',
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+            'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after',
+            'document', 'texte', 'text', 'page', 'ligne', 'line'
+        }
+        
+        # Keep words that are longer than 2 chars and not stop words
+        keywords = [word for word in words if len(word) > 2 and word not in stop_words]
+        
+        # Remove duplicates and limit count
+        unique_keywords = list(dict.fromkeys(keywords))[:max_keywords]
+        
+        return unique_keywords
+    
+    def _enrich_query_with_context(self, base_query: str, has_image: bool) -> str:
+        """Enrich search query with context from images or documents"""
+        original_query = base_query
+        
+        # Extract the actual user question (before document content)
+        user_question = base_query
+        document_content = ""
+        
+        if self._has_document_content(base_query):
+            # Format: "Question utilisateur\n\n[Document: nom.ext]\ncontenu..."
+            # Split user question from document content
+            parts = base_query.split("\n\n[Document:", 1)
+            if len(parts) > 1:
+                user_question = parts[0].strip()
+                # Extract document content after the header
+                doc_parts = parts[1].split("]\n", 1)
+                if len(doc_parts) > 1:
+                    document_content = doc_parts[1]
+        
+        # For images, add relevant context keywords
+        if has_image:
+            # Check if this is a help/procedure question
+            is_help_question = any(word in user_question.lower() for word in 
+                                  ["que faire", "comment", "procédure", "aide", "urgence", "help", "how"])
+            
+            if is_help_question:
+                return f"{user_question} incendie feu moteur avion procédure urgence sécurité"
+        
+        return original_query
     
     def _convert_messages_to_gemini_format(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
         """
@@ -284,12 +380,12 @@ class GeminiProvider(LLMProvider):
             elif msg["role"] == "user":
                 contents.append({
                     "role": "user",
-                    "parts": [{"text": msg["content"]}]
+                    "parts": self._convert_content_to_gemini_parts(msg["content"])
                 })
             elif msg["role"] == "assistant":
                 contents.append({
                     "role": "model",
-                    "parts": [{"text": msg["content"]}]
+                    "parts": self._convert_content_to_gemini_parts(msg["content"])
                 })
             # Skip function/tool messages as Gemini handles them differently
         
@@ -320,6 +416,56 @@ class GeminiProvider(LLMProvider):
             request_body["generationConfig"]["stopSequences"] = stop_sequences
         
         return request_body
+    
+    def _convert_content_to_gemini_parts(self, content):
+        """
+        Convert OpenAI content format to Gemini parts format for multimodal support.
+        
+        OpenAI format: [{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "data:image/..."}}]
+        Gemini format: [{"text": "..."}, {"inline_data": {"mime_type": "image/jpeg", "data": "..."}}]
+        
+        Args:
+            content: Content in OpenAI format (str or list)
+            
+        Returns:
+            List of parts in Gemini format
+        """
+        # If it's just a string, return as text part
+        if isinstance(content, str):
+            return [{"text": content}]
+        
+        # If it's a list (multimodal), convert each part
+        if isinstance(content, list):
+            gemini_parts = []
+            for part in content:
+                if part.get("type") == "text":
+                    gemini_parts.append({
+                        "text": part.get("text", "")
+                    })
+                elif part.get("type") == "image_url":
+                    # Convert OpenAI image format to Gemini format
+                    image_url = part.get("image_url", {}).get("url", "")
+                    if image_url.startswith("data:"):
+                        # Extract media type and base64 data
+                        try:
+                            # Format: data:image/jpeg;base64,/9j/4AAQSkZJRgABA...
+                            header, data = image_url.split(",", 1)
+                            mime_type = header.split(";")[0].replace("data:", "")
+                            
+                            gemini_parts.append({
+                                "inline_data": {
+                                    "mime_type": mime_type,
+                                    "data": data
+                                }
+                            })
+                        except Exception as e:
+                            self.logger.error(f"Failed to convert image format for Gemini: {e}")
+                            # Skip malformed images
+                            continue
+            return gemini_parts
+        
+        # Fallback: return content as text
+        return [{"text": str(content)}]
     
     async def _create_streaming_generator(
         self, 

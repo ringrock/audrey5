@@ -1,4 +1,4 @@
-export const resizeImage = (file: Blob, maxWidth: number, maxHeight: number): Promise<string> => {
+export const resizeImage = (file: Blob, maxWidth: number, maxHeight: number, quality: number = 0.8, useHighQuality: boolean = false): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const reader = new FileReader()
@@ -12,8 +12,9 @@ export const resizeImage = (file: Blob, maxWidth: number, maxHeight: number): Pr
 
         let { width, height } = img
 
-        // Calculate the new dimensions
-        if (width > maxWidth || height > maxHeight) {
+        // Calculate the new dimensions - only resize if necessary
+        const needsResize = width > maxWidth || height > maxHeight
+        if (needsResize) {
           if (width > height) {
             height = (maxWidth / width) * height
             width = maxWidth
@@ -21,6 +22,9 @@ export const resizeImage = (file: Blob, maxWidth: number, maxHeight: number): Pr
             width = (maxHeight / height) * width
             height = maxHeight
           }
+          console.log(`Image resized from original to ${Math.round(width)}x${Math.round(height)}`)
+        } else {
+          console.log(`Image kept at original size: ${width}x${height}`)
         }
 
         canvas.width = width
@@ -30,8 +34,10 @@ export const resizeImage = (file: Blob, maxWidth: number, maxHeight: number): Pr
           ctx.drawImage(img, 0, 0, width, height)
         }
 
-        // Convert the canvas to a base64 string
-        const resizedBase64 = canvas.toDataURL('image/jpeg', 0.8)
+        // Convert the canvas to a base64 string with optimal format
+        const resizedBase64 = useHighQuality && (width * height) < 1000000 ? 
+          canvas.toDataURL('image/png') :  // PNG sans perte pour petites images
+          canvas.toDataURL('image/jpeg', quality)
         resolve(resizedBase64)
       }
 

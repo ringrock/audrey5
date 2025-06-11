@@ -27,12 +27,12 @@ from .i18n import normalize_language_code, is_language_supported, get_supported_
 logger = logging.getLogger(__name__)
 
 
-def detect_language(text: str) -> str:
+def detect_language(text) -> str:
     """
     Detect the language of the input text with robust fallback.
     
     Args:
-        text: The text to analyze for language detection
+        text: The text to analyze for language detection (can be str or list for multimodal)
         
     Returns:
         Two-letter language code (ISO 639-1) or configured default
@@ -41,10 +41,20 @@ def detect_language(text: str) -> str:
         - Uses simple word matching when langdetect unavailable
         - Prioritizes French/English for Avanteam business context
         - Configurable via DEFAULT_LANGUAGE environment variable
+        - Handles multimodal content (list format)
     """
     # Check for environment override
     import os
     default_language = os.getenv("DEFAULT_LANGUAGE", "fr")
+    
+    # Handle multimodal content (list of content parts)
+    if isinstance(text, list):
+        # Extract text from multimodal content
+        text_parts = []
+        for part in text:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+        text = " ".join(text_parts)
     
     if not text or len(text.strip()) < 2:
         logger.debug(f"Text too short for language detection, defaulting to {default_language}")
