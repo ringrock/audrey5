@@ -23,7 +23,13 @@ from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
-from .language_detection import detect_language, get_system_message_for_language
+from .language_detection import get_system_message_for_language
+from .i18n import (
+    get_documents_header, get_user_question_prefix, get_help_request,
+    get_image_too_large_message, get_image_format_unsupported_message,
+    get_model_name_not_configured_message, get_model_no_image_support_message,
+    get_model_vision_detected_message
+)
 
 # Import image processing (with fallback)
 try:
@@ -126,10 +132,15 @@ class AzureOpenAIProvider(LLMProvider):
         await self.init_client()
         
         try:
-            # Detect language from user's last message
-            user_message = messages[-1]["content"] if messages else ""
-            detected_language = detect_language(user_message)
-            self.logger.debug(f"Detected language: {detected_language}")
+            # Detect language from user's last message using LLM for accuracy
+            # Skip language detection if this is an internal call to avoid recursion
+            if kwargs.get("_skip_language_detection", False):
+                detected_language = "en"  # Default for internal calls
+                self.logger.debug("Skipping language detection for internal call")
+            else:
+                user_message = messages[-1]["content"] if messages else ""
+                detected_language = await self.detect_language_with_llm(user_message)
+                self.logger.debug(f"Detected language: {detected_language}")
             
             # Get max_tokens based on response size
             response_size = kwargs.get("response_size", "medium")
@@ -203,7 +214,7 @@ class AzureOpenAIProvider(LLMProvider):
                                 
                                 # Check image size (Azure OpenAI limit is around 20MB for base64)
                                 if data_size > 20000000:  # 20MB
-                                    error_msg = f"Image trop volumineuse: {data_size} caractères. Limite Azure OpenAI: ~20MB."
+                                    error_msg = get_image_too_large_message(detected_language, data_size)
                                     self.logger.error(error_msg)
                                     raise LLMProviderRequestError(error_msg)
                                 
@@ -211,7 +222,7 @@ class AzureOpenAIProvider(LLMProvider):
                                 supported_formats = ["image/jpeg", "image/png", "image/gif", "image/webp"]
                                 format_from_header = header.replace("data:", "").split(";")[0]
                                 if format_from_header not in supported_formats:
-                                    error_msg = f"Format d'image non supporté: {format_from_header}. Formats supportés: {supported_formats}"
+                                    error_msg = get_image_format_unsupported_message(detected_language, format_from_header, supported_formats)
                                     self.logger.error(error_msg)
                                     raise LLMProviderRequestError(error_msg)
             
@@ -228,13 +239,15 @@ class AzureOpenAIProvider(LLMProvider):
                 
                 # If AZURE_OPENAI_MODEL_NAME is not set (deployment name == model name), allow bypass
                 if actual_model_name == deployment_name:
-                    self.logger.warning(f"AZURE_OPENAI_MODEL_NAME non configurée. Nom de déploiement utilisé: '{deployment_name}'. Support d'images assumé - vérifiez que votre déploiement utilise un modèle vision.")
+                    warning_msg = get_model_name_not_configured_message(detected_language, deployment_name)
+                    self.logger.warning(warning_msg)
                 elif not any(vision_model.lower() in current_model for vision_model in vision_models):
-                    error_msg = f"Le modèle '{actual_model_name}' (déploiement: '{deployment_name}') ne supporte pas les images. Utilisez un modèle vision comme gpt-4o, gpt-4-vision-preview, ou gpt-4-turbo."
+                    error_msg = get_model_no_image_support_message(detected_language, actual_model_name)
                     self.logger.error(error_msg)
                     raise LLMProviderRequestError(error_msg)
                 else:
-                    self.logger.info(f"Modèle vision détecté: '{actual_model_name}' (déploiement: '{deployment_name}'). Support d'images confirmé.")
+                    info_msg = get_model_vision_detected_message(detected_language, actual_model_name)
+                    self.logger.info(info_msg)
             
             # Make the request with raw response to get headers
             raw_response = await self.client.chat.completions.with_raw_response.create(**model_args)

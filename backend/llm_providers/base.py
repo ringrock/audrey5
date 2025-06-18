@@ -171,6 +171,121 @@ class LLMProvider(ABC):
         
         return enhanced_messages
     
+    async def detect_language_with_llm(self, text) -> str:
+        """
+        Detect language using the current LLM provider for maximum accuracy.
+        
+        This method uses the provider's own API to detect language, which is more
+        accurate than keyword matching, especially for short texts or technical content.
+        
+        Args:
+            text: The text to analyze (can be str or list for multimodal)
+            
+        Returns:
+            Two-letter language code (ISO 639-1)
+        """
+        # Handle multimodal content
+        if isinstance(text, list):
+            text_parts = []
+            for part in text:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+            text = " ".join(text_parts)
+        
+        if not text or len(text.strip()) < 2:
+            return "en"  # Default to English for empty text
+            
+        try:
+            # Ensure client is initialized
+            await self.init_client()
+            
+            # Create a simple language detection request
+            detection_messages = [
+                {
+                    "role": "user",
+                    "content": f"""Identify the language of this text and respond ONLY with the 2-letter ISO language code (fr, en, es, it, de, pt, etc.):
+
+Text: "{text}"
+
+Language code:"""
+                }
+            ]
+            
+            # Use provider's own send_request method with minimal parameters
+            # IMPORTANT: Set _skip_language_detection to avoid infinite recursion
+            response, _ = await self.send_request(
+                messages=detection_messages,
+                stream=False,
+                response_size="veryShort",  # Keep it short
+                _skip_language_detection=True  # Avoid recursion
+            )
+            
+            # Extract the detected language from the response
+            detected = self._extract_language_from_response(response)
+            
+            # Validate the response is a proper language code
+            if len(detected) == 2 and detected.isalpha():
+                self.logger.debug(f"{self.__class__.__name__} detected language: {detected} for text: {text[:50]}...")
+                return detected
+            else:
+                self.logger.warning(f"Invalid {self.__class__.__name__} language detection response: {detected}")
+                
+        except Exception as e:
+            self.logger.debug(f"{self.__class__.__name__} language detection failed: {e}, falling back to keyword detection")
+        
+        # Fallback to original detection method
+        from .language_detection import detect_language
+        return detect_language(text)
+    
+    def _extract_language_from_response(self, response) -> str:
+        """
+        Extract detected language code from the provider response.
+        
+        This method handles different response formats from various providers.
+        
+        Args:
+            response: Raw response from the provider
+            
+        Returns:
+            Detected language code or empty string if extraction fails
+        """
+        try:
+            # Handle different response formats
+            content = ""
+            
+            # Azure OpenAI format
+            if hasattr(response, 'choices') and response.choices:
+                content = response.choices[0].message.content
+            # Dict format
+            elif isinstance(response, dict) and 'choices' in response:
+                content = response['choices'][0]['message']['content']
+            # Claude format
+            elif isinstance(response, dict) and 'content' in response:
+                if isinstance(response['content'], list):
+                    content = response['content'][0].get('text', '')
+                else:
+                    content = str(response['content'])
+            # Direct content
+            elif hasattr(response, 'content'):
+                content = response.content
+            else:
+                content = str(response)
+            
+            # Extract and clean the language code
+            detected = content.strip().lower()
+            
+            # Remove common prefixes/suffixes
+            if detected.startswith('language code:'):
+                detected = detected.replace('language code:', '').strip()
+            if detected.startswith('code:'):
+                detected = detected.replace('code:', '').strip()
+            
+            return detected
+            
+        except Exception as e:
+            self.logger.debug(f"Failed to extract language from response: {e}")
+            return ""
+    
     @abstractmethod
     async def init_client(self):
         """

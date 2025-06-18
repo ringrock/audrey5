@@ -47,6 +47,13 @@ class TranslationKey(Enum):
     DOCUMENTS_HEADER = "documents_header"
     USER_QUESTION_PREFIX = "user_question_prefix"
     HELP_REQUEST = "help_request"
+    DEFAULT_SYSTEM_MESSAGE = "default_system_message"
+    EMERGENCY_KEYWORDS = "emergency_keywords"
+    IMAGE_TOO_LARGE = "image_too_large"
+    IMAGE_FORMAT_UNSUPPORTED = "image_format_unsupported"
+    MODEL_NAME_NOT_CONFIGURED = "model_name_not_configured"
+    MODEL_NO_IMAGE_SUPPORT = "model_no_image_support"
+    MODEL_VISION_DETECTED = "model_vision_detected"
 
 
 # Centralized translation dictionaries
@@ -124,6 +131,101 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         SupportedLanguage.TURKISH.value: "Lütfen aşağıdaki soruyla ilgili yardım edin.",
         SupportedLanguage.THAI.value: "กรุณาช่วยฉันกับคำถามต่อไปนี้",
         SupportedLanguage.VIETNAMESE.value: "Vui lòng giúp tôi với câu hỏi sau."
+    },
+    
+    TranslationKey.DEFAULT_SYSTEM_MESSAGE.value: {
+        SupportedLanguage.FRENCH.value: "Tu es un assistant IA serviable et précis.",
+        SupportedLanguage.ENGLISH.value: "You are a helpful and accurate AI assistant.",
+        SupportedLanguage.SPANISH.value: "Eres un asistente de IA útil y preciso.",
+        SupportedLanguage.PORTUGUESE.value: "Você é um assistente de IA útil e preciso.",
+        SupportedLanguage.ITALIAN.value: "Sei un assistente IA utile e preciso.",
+        SupportedLanguage.GERMAN.value: "Du bist ein hilfreicher und genauer KI-Assistent.",
+        SupportedLanguage.CHINESE.value: "你是一个有用且准确的AI助手。",
+        SupportedLanguage.JAPANESE.value: "あなたは有用で正確なAIアシスタントです。",
+        SupportedLanguage.KOREAN.value: "당신은 도움이 되고 정확한 AI 어시스턴트입니다.",
+        SupportedLanguage.ARABIC.value: "أنت مساعد ذكي مفيد ودقيق.",
+        SupportedLanguage.RUSSIAN.value: "Вы полезный и точный ИИ-помощник.",
+        SupportedLanguage.HINDI.value: "आप एक सहायक और सटीक AI सहायक हैं।",
+        SupportedLanguage.DUTCH.value: "Je bent een behulpzame en nauwkeurige AI-assistent.",
+        SupportedLanguage.SWEDISH.value: "Du är en hjälpsam och noggrann AI-assistent.",
+        SupportedLanguage.DANISH.value: "Du er en hjælpsom og præcis AI-assistent.",
+        SupportedLanguage.NORWEGIAN.value: "Du er en hjelpsom og nøyaktig AI-assistent.",
+        SupportedLanguage.FINNISH.value: "Olet avulias ja tarkka tekoälyavustaja.",
+        SupportedLanguage.POLISH.value: "Jesteś pomocnym i dokładnym asystentem AI.",
+        SupportedLanguage.CZECH.value: "Jste užitečný a přesný AI asistent.",
+        SupportedLanguage.TURKISH.value: "Yardımcı ve doğru bir AI asistanısınız.",
+        SupportedLanguage.THAI.value: "คุณเป็นผู้ช่วย AI ที่มีประโยชน์และแม่นยำ",
+        SupportedLanguage.VIETNAMESE.value: "Bạn là một trợ lý AI hữu ích và chính xác."
+    },
+    
+    TranslationKey.EMERGENCY_KEYWORDS.value: {
+        SupportedLanguage.FRENCH.value: "incendie feu moteur avion procédure urgence sécurité",
+        SupportedLanguage.ENGLISH.value: "fire engine aircraft procedure emergency safety",
+        SupportedLanguage.SPANISH.value: "incendio fuego motor avión procedimiento emergencia seguridad",
+        SupportedLanguage.PORTUGUESE.value: "incêndio fogo motor avião procedimento emergência segurança",
+        SupportedLanguage.ITALIAN.value: "incendio fuoco motore aereo procedura emergenza sicurezza",
+        SupportedLanguage.GERMAN.value: "brand feuer motor flugzeug verfahren notfall sicherheit",
+        SupportedLanguage.CHINESE.value: "火灾 发动机 飞机 程序 紧急情况 安全",
+        SupportedLanguage.JAPANESE.value: "火災 エンジン 航空機 手順 緊急事態 安全",
+        SupportedLanguage.KOREAN.value: "화재 엔진 항공기 절차 응급상황 안전",
+        SupportedLanguage.ARABIC.value: "حريق محرك طائرة إجراء طوارئ أمان",
+        SupportedLanguage.RUSSIAN.value: "пожар двигатель самолет процедура аварийная ситуация безопасность",
+        SupportedLanguage.HINDI.value: "आग इंजन विमान प्रक्रिया आपातकाल सुरक्षा",
+        SupportedLanguage.DUTCH.value: "brand vuur motor vliegtuig procedure noodgeval veiligheid",
+        SupportedLanguage.SWEDISH.value: "brand eld motor flygplan procedur nödsituation säkerhet",
+        SupportedLanguage.DANISH.value: "brand ild motor fly procedure nødsituation sikkerhed",
+        SupportedLanguage.NORWEGIAN.value: "brann ild motor fly prosedyre nødsituasjon sikkerhet",
+        SupportedLanguage.FINNISH.value: "tulipalo tuli moottori lentokone menettely hätätilanne turvallisuus",
+        SupportedLanguage.POLISH.value: "pożar ogień silnik samolot procedura nagły wypadek bezpieczeństwo",
+        SupportedLanguage.CZECH.value: "požár oheň motor letadlo postup nouzová situace bezpečnost",
+        SupportedLanguage.TURKISH.value: "yangın ateş motor uçak prosedür acil durum güvenlik",
+        SupportedLanguage.THAI.value: "ไฟไหม้ เครื่องยนต์ เครื่องบิน ขั้นตอน เหตุฉุกเฉิน ความปลอดภัย",
+        SupportedLanguage.VIETNAMESE.value: "cháy lửa động cơ máy bay quy trình khẩn cấp an toàn"
+    },
+    
+    TranslationKey.IMAGE_TOO_LARGE.value: {
+        SupportedLanguage.FRENCH.value: "Image trop volumineuse: {data_size} caractères. Limite: ~20MB.",
+        SupportedLanguage.ENGLISH.value: "Image too large: {data_size} characters. Limit: ~20MB.",
+        SupportedLanguage.ITALIAN.value: "Immagine troppo grande: {data_size} caratteri. Limite: ~20MB.",
+        SupportedLanguage.SPANISH.value: "Imagen demasiado grande: {data_size} caracteres. Límite: ~20MB.",
+        SupportedLanguage.GERMAN.value: "Bild zu groß: {data_size} Zeichen. Limit: ~20MB.",
+        SupportedLanguage.PORTUGUESE.value: "Imagem muito grande: {data_size} caracteres. Limite: ~20MB."
+    },
+    
+    TranslationKey.IMAGE_FORMAT_UNSUPPORTED.value: {
+        SupportedLanguage.FRENCH.value: "Format d'image non supporté: {format}. Formats supportés: {supported}",
+        SupportedLanguage.ENGLISH.value: "Unsupported image format: {format}. Supported formats: {supported}",
+        SupportedLanguage.ITALIAN.value: "Formato immagine non supportato: {format}. Formati supportati: {supported}",
+        SupportedLanguage.SPANISH.value: "Formato de imagen no compatible: {format}. Formatos compatibles: {supported}",
+        SupportedLanguage.GERMAN.value: "Nicht unterstütztes Bildformat: {format}. Unterstützte Formate: {supported}",
+        SupportedLanguage.PORTUGUESE.value: "Formato de imagem não suportado: {format}. Formatos suportados: {supported}"
+    },
+    
+    TranslationKey.MODEL_NAME_NOT_CONFIGURED.value: {
+        SupportedLanguage.FRENCH.value: "Nom de modèle non configuré. Déploiement utilisé: '{deployment}'. Support d'images assumé.",
+        SupportedLanguage.ENGLISH.value: "Model name not configured. Using deployment: '{deployment}'. Image support assumed.",
+        SupportedLanguage.ITALIAN.value: "Nome modello non configurato. Usando deployment: '{deployment}'. Supporto immagini assunto.",
+        SupportedLanguage.SPANISH.value: "Nombre de modelo no configurado. Usando despliegue: '{deployment}'. Soporte de imágenes asumido.",
+        SupportedLanguage.GERMAN.value: "Modellname nicht konfiguriert. Verwende Deployment: '{deployment}'. Bildunterstützung angenommen.",
+        SupportedLanguage.PORTUGUESE.value: "Nome do modelo não configurado. Usando deployment: '{deployment}'. Suporte a imagens assumido."
+    },
+    
+    TranslationKey.MODEL_NO_IMAGE_SUPPORT.value: {
+        SupportedLanguage.FRENCH.value: "Le modèle '{model}' ne supporte pas les images. Utilisez un modèle vision.",
+        SupportedLanguage.ENGLISH.value: "Model '{model}' does not support images. Use a vision model.",
+        SupportedLanguage.ITALIAN.value: "Il modello '{model}' non supporta le immagini. Usa un modello di visione.",
+        SupportedLanguage.SPANISH.value: "El modelo '{model}' no admite imágenes. Use un modelo de visión.",
+        SupportedLanguage.GERMAN.value: "Modell '{model}' unterstützt keine Bilder. Verwenden Sie ein Vision-Modell.",
+        SupportedLanguage.PORTUGUESE.value: "O modelo '{model}' não suporta imagens. Use um modelo de visão."
+    },
+    
+    TranslationKey.MODEL_VISION_DETECTED.value: {
+        SupportedLanguage.FRENCH.value: "Modèle vision détecté: '{model}'. Support d'images confirmé.",
+        SupportedLanguage.ENGLISH.value: "Vision model detected: '{model}'. Image support confirmed.",
+        SupportedLanguage.ITALIAN.value: "Modello di visione rilevato: '{model}'. Supporto immagini confermato.",
+        SupportedLanguage.SPANISH.value: "Modelo de visión detectado: '{model}'. Soporte de imágenes confirmado.",
+        SupportedLanguage.GERMAN.value: "Vision-Modell erkannt: '{model}'. Bildunterstützung bestätigt.",
+        SupportedLanguage.PORTUGUESE.value: "Modelo de visão detectado: '{model}'. Suporte a imagens confirmado."
     }
 }
 
@@ -160,6 +262,46 @@ def get_user_question_prefix(language_code: str) -> str:
 def get_help_request(language_code: str) -> str:
     """Get the localized help request message."""
     return get_translation(TranslationKey.HELP_REQUEST, language_code)
+
+
+def get_default_system_message(language_code: str) -> str:
+    """Get the localized default system message."""
+    return get_translation(TranslationKey.DEFAULT_SYSTEM_MESSAGE, language_code)
+
+
+def get_emergency_keywords(language_code: str) -> str:
+    """Get the localized emergency keywords for search enhancement."""
+    return get_translation(TranslationKey.EMERGENCY_KEYWORDS, language_code)
+
+
+def get_image_too_large_message(language_code: str, data_size: int) -> str:
+    """Get the localized image too large error message."""
+    template = get_translation(TranslationKey.IMAGE_TOO_LARGE, language_code)
+    return template.format(data_size=data_size)
+
+
+def get_image_format_unsupported_message(language_code: str, format_name: str, supported_formats: list) -> str:
+    """Get the localized unsupported image format error message."""
+    template = get_translation(TranslationKey.IMAGE_FORMAT_UNSUPPORTED, language_code)
+    return template.format(format=format_name, supported=supported_formats)
+
+
+def get_model_name_not_configured_message(language_code: str, deployment_name: str) -> str:
+    """Get the localized model name not configured warning message."""
+    template = get_translation(TranslationKey.MODEL_NAME_NOT_CONFIGURED, language_code)
+    return template.format(deployment=deployment_name)
+
+
+def get_model_no_image_support_message(language_code: str, model_name: str) -> str:
+    """Get the localized model no image support error message."""
+    template = get_translation(TranslationKey.MODEL_NO_IMAGE_SUPPORT, language_code)
+    return template.format(model=model_name)
+
+
+def get_model_vision_detected_message(language_code: str, model_name: str) -> str:
+    """Get the localized vision model detected message."""
+    template = get_translation(TranslationKey.MODEL_VISION_DETECTED, language_code)
+    return template.format(model=model_name)
 
 
 def is_language_supported(language_code: str) -> bool:

@@ -27,6 +27,63 @@ from .i18n import normalize_language_code, is_language_supported, get_supported_
 logger = logging.getLogger(__name__)
 
 
+async def detect_language_with_llm(text: str) -> str:
+    """
+    Detect language using a lightweight LLM call for maximum accuracy.
+    
+    Args:
+        text: The text to analyze
+        
+    Returns:
+        Two-letter language code (ISO 639-1)
+    """
+    try:
+        # Use a simple Azure OpenAI call to detect language
+        from backend.settings import app_settings
+        from openai import AsyncAzureOpenAI
+        
+        if not app_settings.azure_openai.endpoint or not app_settings.azure_openai.api_key:
+            logger.debug("Azure OpenAI not configured, falling back to keyword detection")
+            return detect_language_fallback(text)
+        
+        client = AsyncAzureOpenAI(
+            azure_endpoint=app_settings.azure_openai.endpoint,
+            api_key=app_settings.azure_openai.api_key,
+            api_version=app_settings.azure_openai.api_version,
+        )
+        
+        # Quick language detection prompt
+        response = await client.chat.completions.create(
+            model=app_settings.azure_openai.model,
+            messages=[
+                {
+                    "role": "user", 
+                    "content": f"""Identify the language of this text and respond ONLY with the 2-letter ISO language code (fr, en, es, it, de, pt, etc.):
+
+Text: "{text}"
+
+Language code:"""
+                }
+            ],
+            max_tokens=5,
+            temperature=0
+        )
+        
+        detected = response.choices[0].message.content.strip().lower()
+        
+        # Validate the response is a proper language code
+        if len(detected) == 2 and detected.isalpha():
+            logger.debug(f"LLM detected language: {detected} for text: {text[:50]}...")
+            return detected
+        else:
+            logger.warning(f"Invalid LLM language detection response: {detected}")
+            return detect_language_fallback(text)
+            
+    except Exception as e:
+        logger.debug(f"LLM language detection failed: {e}, falling back to keyword detection")
+        return detect_language_fallback(text)
+
+
 def detect_language(text) -> str:
     """
     Detect the language of the input text with robust fallback.
@@ -38,14 +95,14 @@ def detect_language(text) -> str:
         Two-letter language code (ISO 639-1) or configured default
         
     Note:
-        - Uses simple word matching when langdetect unavailable
-        - Prioritizes French/English for Avanteam business context
+        - Uses improved keyword matching for common languages
+        - Falls back to langdetect when available
         - Configurable via DEFAULT_LANGUAGE environment variable
         - Handles multimodal content (list format)
     """
     # Check for environment override
     import os
-    default_language = os.getenv("DEFAULT_LANGUAGE", "fr")
+    default_language = os.getenv("DEFAULT_LANGUAGE", "en")
     
     # Handle multimodal content (list of content parts)
     if isinstance(text, list):
@@ -59,6 +116,22 @@ def detect_language(text) -> str:
     if not text or len(text.strip()) < 2:
         logger.debug(f"Text too short for language detection, defaulting to {default_language}")
         return default_language
+    
+    return detect_language_fallback(text.strip())
+
+
+def detect_language_fallback(text: str) -> str:
+    """
+    Fallback language detection using keyword matching and langdetect.
+    
+    Args:
+        text: The text to analyze
+        
+    Returns:
+        Two-letter language code (ISO 639-1)
+    """
+    import os
+    default_language = os.getenv("DEFAULT_LANGUAGE", "en")
     
     text_lower = text.strip().lower()
     words = text_lower.split()
@@ -79,16 +152,51 @@ def detect_language(text) -> str:
         "in", "on", "at", "to", "for", "with", "by", "from", "about", "into"
     }
     
+    spanish_words = {
+        "hola", "gracias", "sí", "si", "no", "cómo", "como", "qué", "que", 
+        "cuándo", "cuando", "dónde", "donde", "por", "para", "con", "sin",
+        "yo", "tú", "él", "ella", "nosotros", "vosotros", "ellos", "ellas",
+        "un", "una", "el", "la", "los", "las", "de", "del", "en", "es", "son",
+        "hay", "nuevo", "nueva", "nuevos", "nuevas", "dime", "notas", "versión"
+    }
+    
+    italian_words = {
+        "ciao", "grazie", "sì", "no", "come", "cosa", "quando", "dove", 
+        "perché", "chi", "che", "con", "senza", "per", "di", "da", "in",
+        "io", "tu", "lui", "lei", "noi", "voi", "loro", "il", "la", "gli", 
+        "uno", "una", "è", "sono", "hai", "novità", "prodotto", "riassumere"
+    }
+    
+    german_words = {
+        "hallo", "danke", "ja", "nein", "wie", "was", "wann", "wo", "warum",
+        "wer", "ich", "du", "er", "sie", "wir", "ihr", "der", "die", "das",
+        "ein", "eine", "und", "oder", "aber", "mit", "ohne", "für", "von",
+        "aus", "zu", "in", "auf", "über", "unter", "fasse", "zusammen"
+    }
+    
     # Check for explicit language indicators
     french_count = sum(1 for word in words if word in french_words)
     english_count = sum(1 for word in words if word in english_words)
+    spanish_count = sum(1 for word in words if word in spanish_words)
+    italian_count = sum(1 for word in words if word in italian_words)
+    german_count = sum(1 for word in words if word in german_words)
     
-    if french_count > 0 and french_count >= english_count:
-        logger.debug(f"Detected French words in: {text}")
-        return "fr"
-    elif english_count > 0:
-        logger.debug(f"Detected English words in: {text}")
-        return "en"
+    # Find the language with most matches
+    language_scores = [
+        ("fr", french_count),
+        ("en", english_count), 
+        ("es", spanish_count),
+        ("it", italian_count),
+        ("de", german_count)
+    ]
+    
+    # Sort by count (descending) and return the language with most matches
+    language_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    if language_scores[0][1] > 0:
+        detected_lang = language_scores[0][0]
+        logger.debug(f"Detected {detected_lang} words ({language_scores[0][1]} matches) in: {text}")
+        return detected_lang
     
     # Fallback to langdetect if available
     if LANGDETECT_AVAILABLE:

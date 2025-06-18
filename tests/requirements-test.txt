@@ -1,0 +1,26 @@
+# Dépendances pour les tests fonctionnels AskMe
+
+# Framework de test principal
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Rapports et couverture
+pytest-html>=3.2.0
+pytest-cov>=4.1.0
+
+# Utilitaires de test
+pytest-mock>=3.11.0
+pytest-timeout>=2.1.0
+pytest-xdist>=3.3.0  # Tests en parallèle
+
+# Assertions et mocking
+responses>=0.23.0
+httpx>=0.24.0
+aioresponses>=0.7.0
+
+# Manipulation de données pour assertions
+jsonschema>=4.18.0
+
+# Logging et debug
+pytest-sugar>=0.9.7  # Améliore l'affichage des tests
+pytest-clarity>=1.0.1  # Améliore les messages d'erreur

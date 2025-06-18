@@ -22,7 +22,7 @@ from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
-from .language_detection import detect_language, get_system_message_for_language
+from .language_detection import get_system_message_for_language
 from .i18n import get_documents_header, get_user_question_prefix, get_help_request
 
 
@@ -110,10 +110,15 @@ class GeminiProvider(LLMProvider):
             # Reset citation state for new request
             self._current_search_citations = None
             
-            # Detect language from user's last message
-            user_message = messages[-1]["content"] if messages else ""
-            detected_language = detect_language(user_message)
-            self.logger.debug(f"Detected language: {detected_language}")
+            # Detect language from user's last message using LLM for accuracy
+            # Skip language detection if this is an internal call to avoid recursion
+            if kwargs.get("_skip_language_detection", False):
+                detected_language = "en"  # Default for internal calls
+                self.logger.debug("Skipping language detection for internal call")
+            else:
+                user_message = messages[-1]["content"] if messages else ""
+                detected_language = await self.detect_language_with_llm(user_message)
+                self.logger.debug(f"Detected language: {detected_language}")
             
             # Enhance messages with Azure Search if configured
             enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)

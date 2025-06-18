@@ -34,8 +34,8 @@ from backend.settings import app_settings
 from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
-from .language_detection import detect_language, get_system_message_for_language
-from .i18n import get_documents_header
+from .language_detection import get_system_message_for_language
+from .i18n import get_documents_header, get_default_system_message, get_emergency_keywords
 
 
 class OpenAIDirectProvider(LLMProvider):
@@ -120,10 +120,15 @@ class OpenAIDirectProvider(LLMProvider):
         await self.init_client()
         
         try:
-            # Detect language from user's last message
-            user_message = messages[-1]["content"] if messages else ""
-            detected_language = detect_language(user_message)
-            self.logger.debug(f"Detected language: {detected_language}")
+            # Detect language from user's last message using LLM for accuracy
+            # Skip language detection if this is an internal call to avoid recursion
+            if kwargs.get("_skip_language_detection", False):
+                detected_language = "en"  # Default for internal calls
+                self.logger.debug("Skipping language detection for internal call")
+            else:
+                user_message = messages[-1]["content"] if messages else ""
+                detected_language = await self.detect_language_with_llm(user_message)
+                self.logger.debug(f"Detected language: {detected_language}")
             
             # Convert OpenAI messages and enhance with Azure Search if configured
             enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
@@ -309,7 +314,7 @@ class OpenAIDirectProvider(LLMProvider):
         
         # Add system message with language awareness and response size preference using centralized method
         base_system_message = getattr(app_settings.openai_direct, 'system_message', 
-                                     "Tu es un assistant IA serviable et précis.")
+                                     get_default_system_message(detected_language))
         response_size = kwargs.get("response_size", "medium")
         system_message = get_system_message_for_language(detected_language, base_system_message, response_size)
         
@@ -386,7 +391,8 @@ class OpenAIDirectProvider(LLMProvider):
                                               ["que faire", "comment", "procédure", "aide", "urgence", "help", "how"])
                         
                         if is_help_question:
-                            return f"{base_query} incendie feu moteur avion procédure urgence sécurité"
+                            emergency_keywords = get_emergency_keywords(detected_language)
+                            return f"{base_query} {emergency_keywords}"
                     
                     return base_query
                 

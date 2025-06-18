@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(test_env/bin/pip install pytest pytest-asyncio pytest-html)",
+      "Bash(test_env/bin/pip install pydantic httpx)",
+      "Bash(test_env/bin/pip install pydantic-settings)",
+      "Bash(test_env/bin/python -m pytest tests/functional_tests/test_image_upload.py -v -k \"OPENAI_DIRECT\" --tb=short)",
+      "Bash(grep:*)",
+      "Bash(test_env/bin/python:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)"
+    ],
+    "deny": []
+  }
+}
