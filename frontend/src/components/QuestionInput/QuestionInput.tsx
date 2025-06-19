@@ -297,6 +297,53 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     }
   }
 
+  const onPaste = (ev: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    // Vérifier si les images sont supportées par le provider actuel
+    if (!supportsImages) {
+      return
+    }
+
+    const clipboardData = ev.clipboardData
+    if (!clipboardData || !clipboardData.items) {
+      return
+    }
+
+    // Rechercher une image dans le presse-papier
+    for (let i = 0; i < clipboardData.items.length; i++) {
+      const item = clipboardData.items[i]
+      
+      if (item.type.startsWith('image/')) {
+        ev.preventDefault() // Empêcher le comportement par défaut du collage
+        
+        console.log('Image détectée dans le presse-papier:', item.type)
+        
+        // Récupérer le fichier depuis le presse-papier
+        const file = item.getAsFile()
+        if (file) {
+          console.log('Fichier image récupéré du presse-papier:', file.name || 'clipboard-image', file.type, file.size)
+          
+          // Réinitialiser les états précédents
+          setBase64Image(null)
+          setDocumentText(null)
+          setDocumentInfo(null)
+          
+          // Utiliser la même logique que pour l'upload de fichier
+          convertToBase64(file)
+            .then(() => {
+              console.log('Image du presse-papier traitée avec succès')
+            })
+            .catch((error) => {
+              console.error('Erreur lors du traitement de l\'image du presse-papier:', error)
+              if (error instanceof Error) {
+                alert(error.message)
+              }
+            })
+        }
+        break // Sortir de la boucle après avoir trouvé la première image
+      }
+    }
+  }
+
   const onQuestionChange = (_ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
     setQuestion(newValue || '')
     
@@ -344,6 +391,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         value={question}
         onChange={onQuestionChange}
         onKeyDown={onEnterPress}
+        onPaste={onPaste}
       />
       <div className={styles.fileInputContainer}>
         <input
@@ -367,7 +415,19 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
           />
         </label>
       </div>
-      {base64Image && <img className={styles.uploadedImage} src={base64Image} alt="Uploaded Preview" />}
+      {base64Image && (
+        <div className={styles.uploadedImageContainer}>
+          <img className={styles.uploadedImage} src={base64Image} alt="Uploaded Preview" />
+          <button 
+            className={styles.removeImageButton}
+            onClick={() => setBase64Image(null)}
+            aria-label="Supprimer l'image"
+            title="Supprimer l'image"
+          >
+            <FontIcon iconName="Cancel" />
+          </button>
+        </div>
+      )}
       <div
         className={styles.questionInputSendButtonContainer}
         role="button"
