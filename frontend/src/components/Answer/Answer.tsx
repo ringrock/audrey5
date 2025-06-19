@@ -4,7 +4,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { nord } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Checkbox, DefaultButton, Dialog, FontIcon, Stack, Text } from '@fluentui/react'
 import { useBoolean } from '@fluentui/react-hooks'
-import { ThumbDislike20Filled, ThumbLike20Filled } from '@fluentui/react-icons'
+import { ThumbDislike20Filled, ThumbLike20Filled, Copy20Regular } from '@fluentui/react-icons'
 import DOMPurify from 'dompurify'
 import remarkGfm from 'remark-gfm'
 import supersub from 'remark-supersub'
@@ -49,6 +49,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   const [isFeedbackDialogOpen, setIsFeedbackDialogOpen] = useState(false)
   const [showReportInappropriateFeedback, setShowReportInappropriateFeedback] = useState(false)
   const [negativeFeedbackList, setNegativeFeedbackList] = useState<Feedback[]>([])
+  const [copySuccess, setCopySuccess] = useState(false)
   const appStateContext = useContext(AppStateContext)
   const FEEDBACK_ENABLED =
     appStateContext?.state.frontendSettings?.feedback_enabled && appStateContext?.state.isCosmosDBAvailable?.cosmosDB
@@ -177,6 +178,24 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     setIsFeedbackDialogOpen(false)
     setShowReportInappropriateFeedback(false)
     setNegativeFeedbackList([])
+  }
+
+  const onCopyResponseClicked = async () => {
+    if (!parsedAnswer?.markdownFormatText) return;
+    
+    try {
+      // Copier le texte sans les balises HTML
+      const textContent = parsedAnswer.markdownFormatText.replace(/<[^>]*>/g, '');
+      await navigator.clipboard.writeText(textContent);
+      setCopySuccess(true);
+      
+      // Réinitialiser l'état après 2 secondes
+      setTimeout(() => {
+        setCopySuccess(false);
+      }, 2000);
+    } catch (err) {
+      console.error('Erreur lors de la copie:', err);
+    }
   }
 
   const shouldDisplayCitationLink = (citation : Citation) => {
@@ -439,33 +458,47 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
               />}
             </Stack.Item>
             <Stack.Item className={styles.answerHeader}>
-              {FEEDBACK_ENABLED && answer.message_id !== undefined && (
+              {(FEEDBACK_ENABLED && answer.message_id !== undefined) || (!FEEDBACK_ENABLED && answer.message_id !== undefined) ? (
                 <Stack horizontal horizontalAlign="space-between">
-                  <ThumbLike20Filled
+                  <Copy20Regular
                     aria-hidden="false"
-                    aria-label="Like this response"
-                    onClick={() => onLikeResponseClicked()}
+                    aria-label={copySuccess ? localizedStrings.copied : localizedStrings.copyResponse}
+                    onClick={() => onCopyResponseClicked()}
                     style={
-                      feedbackState === Feedback.Positive ||
-                        appStateContext?.state.feedbackState[answer.message_id] === Feedback.Positive
+                      copySuccess
                         ? { color: 'darkgreen', cursor: 'pointer' }
                         : { color: 'slategray', cursor: 'pointer' }
                     }
                   />
-                  <ThumbDislike20Filled
-                    aria-hidden="false"
-                    aria-label="Dislike this response"
-                    onClick={() => onDislikeResponseClicked()}
-                    style={
-                      feedbackState !== Feedback.Positive &&
-                        feedbackState !== Feedback.Neutral &&
-                        feedbackState !== undefined
-                        ? { color: 'darkred', cursor: 'pointer' }
-                        : { color: 'slategray', cursor: 'pointer' }
-                    }
-                  />
+                  {FEEDBACK_ENABLED && (
+                    <>
+                      <ThumbLike20Filled
+                        aria-hidden="false"
+                        aria-label="Like this response"
+                        onClick={() => onLikeResponseClicked()}
+                        style={
+                          feedbackState === Feedback.Positive ||
+                            appStateContext?.state.feedbackState[answer.message_id] === Feedback.Positive
+                            ? { color: 'darkgreen', cursor: 'pointer' }
+                            : { color: 'slategray', cursor: 'pointer' }
+                        }
+                      />
+                      <ThumbDislike20Filled
+                        aria-hidden="false"
+                        aria-label="Dislike this response"
+                        onClick={() => onDislikeResponseClicked()}
+                        style={
+                          feedbackState !== Feedback.Positive &&
+                            feedbackState !== Feedback.Neutral &&
+                            feedbackState !== undefined
+                            ? { color: 'darkred', cursor: 'pointer' }
+                            : { color: 'slategray', cursor: 'pointer' }
+                        }
+                      />
+                    </>
+                  )}
                 </Stack>
-              )}
+              ) : null}
             </Stack.Item>
           </Stack>
         </Stack.Item>
@@ -644,6 +677,8 @@ let localizedStrings = new LocalizedStrings({
   FR: {
       openDocument : "Ouvrir le document",
       openAttachment : "Ouvrir la pièce-jointe",
+      copyResponse: "Copier la réponse",
+      copied: "Copié!",
       submitFeedbakc: "Soumette un avis",
       feedbackHelps: "Votre feedback nous permet d'améliorer votre expérience.",
       feedbackWillBVisible: "En validant, votre retour sera rendu visible pour les administrateurs de l'application.",
@@ -668,6 +703,8 @@ let localizedStrings = new LocalizedStrings({
   EN:{
       openDocument : "Open document", 
       openAttachment : "Open attachment",
+      copyResponse: "Copy response",
+      copied: "Copied!",
       submitFeedbakc: "Submit Feedback",
       feedbackHelps: "Your feedback will improve this experience.",
       feedbackWillBVisible: "By pressing submit, your feedback will be visible to the application owner.",
