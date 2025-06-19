@@ -1,6 +1,6 @@
-import { useContext, useState, useEffect } from 'react'
+import { useContext, useState, useEffect, useRef } from 'react'
 import { FontIcon, Stack, TextField } from '@fluentui/react'
-import { SendRegular } from '@fluentui/react-icons'
+import { SendRegular, Mic20Regular, MicOff20Regular } from '@fluentui/react-icons'
 
 import Send from '../../assets/Send.svg'
 
@@ -64,6 +64,11 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const [historyIndex, setHistoryIndex] = useState<number>(-1)
   const [tempQuestion, setTempQuestion] = useState<string>('')
 
+  // Voice recognition states
+  const [isListening, setIsListening] = useState<boolean>(false)
+  const [speechSupported, setSpeechSupported] = useState<boolean>(false)
+  const recognitionRef = useRef<any>(null)
+
   const appStateContext = useContext(AppStateContext)
   
   // Load history from localStorage on component mount
@@ -77,6 +82,82 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         }
       } catch (error) {
         console.warn('Failed to parse question history from localStorage:', error)
+      }
+    }
+  }, [])
+
+  // Initialize speech recognition
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    
+    if (SpeechRecognition) {
+      setSpeechSupported(true)
+      const recognition = new SpeechRecognition()
+      
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.lang = 'fr-FR' // Français par défaut, peut être configuré
+      
+      recognition.onstart = () => {
+        setIsListening(true)
+        console.log('Speech recognition started')
+      }
+      
+      recognition.onresult = (event: any) => {
+        let transcript = ''
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript
+        }
+        
+        // Mettre à jour la question avec le texte reconnu
+        setQuestion(transcript)
+        
+        // Si le résultat est final, arrêter l'écoute
+        if (event.results[event.results.length - 1].isFinal) {
+          setIsListening(false)
+        }
+      }
+      
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error)
+        setIsListening(false)
+        
+        // Messages d'erreur localisés
+        let errorMessage = 'Erreur de reconnaissance vocale'
+        switch (event.error) {
+          case 'no-speech':
+            errorMessage = 'Aucune parole détectée. Veuillez réessayer.'
+            break
+          case 'audio-capture':
+            errorMessage = 'Microphone non accessible. Vérifiez les autorisations.'
+            break
+          case 'not-allowed':
+            errorMessage = 'Permission microphone refusée. Activez-la dans les paramètres du navigateur.'
+            break
+          case 'network':
+            errorMessage = 'Erreur réseau. Vérifiez votre connexion internet.'
+            break
+        }
+        
+        // Afficher l'erreur (vous pouvez remplacer par un toast ou notification)
+        console.warn(errorMessage)
+      }
+      
+      recognition.onend = () => {
+        setIsListening(false)
+        console.log('Speech recognition ended')
+      }
+      
+      recognitionRef.current = recognition
+    } else {
+      setSpeechSupported(false)
+      console.warn('Speech recognition not supported in this browser')
+    }
+    
+    // Cleanup function
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
       }
     }
   }, [])
@@ -100,6 +181,34 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       default:
         return "Les images ne sont pas supportées par ce provider"
     }
+  }
+
+  const toggleVoiceRecognition = () => {
+    if (!speechSupported || !recognitionRef.current) {
+      return
+    }
+
+    if (isListening) {
+      // Arrêter l'écoute
+      recognitionRef.current.stop()
+      setIsListening(false)
+    } else {
+      // Commencer l'écoute
+      try {
+        recognitionRef.current.start()
+      } catch (error) {
+        console.error('Failed to start speech recognition:', error)
+        setIsListening(false)
+      }
+    }
+  }
+
+  const getVoiceTooltip = () => {
+    if (!speechSupported) {
+      return "Reconnaissance vocale non supportée par ce navigateur"
+    }
+    
+    return isListening ? "Arrêter l'écoute" : "Commencer la dictée vocale"
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -414,6 +523,22 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             aria-label="Upload Image"
           />
         </label>
+      </div>
+      <div className={styles.voiceInputContainer}>
+        <button
+          type="button"
+          className={`${styles.voiceButton} ${!speechSupported ? styles.disabled : ''} ${isListening ? styles.listening : ''}`}
+          onClick={toggleVoiceRecognition}
+          disabled={!speechSupported}
+          aria-label={getVoiceTooltip()}
+          title={getVoiceTooltip()}
+        >
+          {isListening ? (
+            <MicOff20Regular className={styles.voiceIcon} />
+          ) : (
+            <Mic20Regular className={styles.voiceIcon} />
+          )}
+        </button>
       </div>
       {base64Image && (
         <div className={styles.uploadedImageContainer}>
