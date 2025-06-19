@@ -12,7 +12,8 @@
       "Bash(test_env/bin/python:*)",
       "Bash(ls:*)",
       "Bash(rg:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }
