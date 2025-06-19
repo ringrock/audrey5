@@ -140,6 +140,14 @@ export const appStateReducer = (state: AppState, action: Action): AppState => {
       };
     case 'SET_AUTHENTICATION_STATUS':
       return { ...state, isAuthenticated: action.payload }
+    case 'TOGGLE_AUTO_AUDIO':
+      // Save to localStorage
+      try {
+        localStorage.setItem('isAutoAudioEnabled', action.payload.toString())
+      } catch (error) {
+        console.warn('Failed to save audio settings to localStorage:', error)
+      }
+      return { ...state, isAutoAudioEnabled: action.payload }
     default:
       return state
   }

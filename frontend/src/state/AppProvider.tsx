@@ -40,6 +40,7 @@ export interface AppState {
   initialQuestion: string;
   isAuthenticated: boolean;
   customizationPreferences: CustomizationPreferences;
+  isAutoAudioEnabled: boolean;
 }
 
 export type Action =
@@ -70,6 +71,7 @@ export type Action =
   | { type: 'SET_INITIAL_QUESTION'; payload: string }
   | { type: 'SET_AUTHENTICATION_STATUS'; payload: boolean }
   | { type: 'UPDATE_CUSTOMIZATION_PREFERENCES'; payload: CustomizationPreferences }
+  | { type: 'TOGGLE_AUTO_AUDIO'; payload: boolean }
 
 const initialState: AppState = {
   isChatHistoryOpen: false,
@@ -97,7 +99,8 @@ const initialState: AppState = {
     responseSize: 'medium',
     documentsCount: 5,
     llmProvider: 'AZURE_OPENAI'
-  }
+  },
+  isAutoAudioEnabled: false
 }
 
 export const AppStateContext = createContext<
@@ -115,7 +118,7 @@ type AppStateProviderProps = {
 export const AppStateProvider: React.FC<AppStateProviderProps> = ({ children }) => {
   const [state, dispatch] = useReducer(appStateReducer, initialState)
 
-  // Load customization preferences from localStorage on startup
+  // Load customization preferences and audio settings from localStorage on startup
   useEffect(() => {
     const loadPreferencesFromStorage = (): CustomizationPreferences | null => {
       try {
@@ -136,10 +139,23 @@ export const AppStateProvider: React.FC<AppStateProviderProps> = ({ children }) 
       return null
     }
 
+    const loadAudioSettings = (): boolean => {
+      try {
+        const saved = localStorage.getItem('isAutoAudioEnabled')
+        return saved === 'true'
+      } catch (error) {
+        console.warn('Failed to load audio settings from localStorage:', error)
+        return false
+      }
+    }
+
     const savedPreferences = loadPreferencesFromStorage()
     if (savedPreferences) {
       dispatch({ type: 'UPDATE_CUSTOMIZATION_PREFERENCES', payload: savedPreferences })
     }
+
+    const savedAudioSetting = loadAudioSettings()
+    dispatch({ type: 'TOGGLE_AUTO_AUDIO', payload: savedAudioSetting })
   }, [])
 
   useEffect(() => {

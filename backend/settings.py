@@ -913,6 +913,19 @@ class _BaseSettings(BaseSettings):
     available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL", "GEMINI"]  # List of providers to expose in UI
     citation_content_max_length: int = 1000  # Maximum length for citation content displayed in UI
     
+    # Voice Features Configuration
+    voice_input_enabled: bool = True  # Enable voice input functionality
+    wake_word_enabled: bool = True    # Enable wake word detection
+    wake_word_phrases: Optional[List[str]] = ["asmi", "askme", "askmi", "asqmi"]  # Wake word phrases
+    
+    @field_validator('wake_word_phrases', mode='before')
+    @classmethod
+    def split_wake_word_phrases(cls, comma_separated_string: str) -> List[str]:
+        if isinstance(comma_separated_string, str) and len(comma_separated_string) > 0:
+            return [phrase.strip().lower() for phrase in comma_separated_string.split(',')]
+        
+        return ["asmi", "askme", "askmi", "asqmi"]
+    
     @field_validator('available_llm_providers', mode='before')
     @classmethod
     def split_providers(cls, comma_separated_string: str) -> List[str]:

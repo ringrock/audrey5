@@ -4,7 +4,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { nord } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Checkbox, DefaultButton, Dialog, FontIcon, Stack, Text } from '@fluentui/react'
 import { useBoolean } from '@fluentui/react-hooks'
-import { ThumbDislike20Filled, ThumbLike20Filled, Copy20Regular } from '@fluentui/react-icons'
+import { ThumbDislike20Filled, ThumbLike20Filled, Copy20Regular, Speaker120Regular, SpeakerOff20Regular } from '@fluentui/react-icons'
 import DOMPurify from 'dompurify'
 import remarkGfm from 'remark-gfm'
 import supersub from 'remark-supersub'
@@ -50,6 +50,8 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   const [showReportInappropriateFeedback, setShowReportInappropriateFeedback] = useState(false)
   const [negativeFeedbackList, setNegativeFeedbackList] = useState<Feedback[]>([])
   const [copySuccess, setCopySuccess] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [speechSynthesis, setSpeechSynthesis] = useState<SpeechSynthesisUtterance | null>(null)
   const appStateContext = useContext(AppStateContext)
   const FEEDBACK_ENABLED =
     appStateContext?.state.frontendSettings?.feedback_enabled && appStateContext?.state.isCosmosDBAvailable?.cosmosDB
@@ -65,6 +67,18 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   useEffect(() => {
     setChevronIsExpanded(isRefAccordionOpen)
   }, [isRefAccordionOpen])
+
+  // Auto-lecture audio si activée - DÉSACTIVÉ TEMPORAIREMENT
+  // useEffect(() => {
+  //   if (appStateContext?.state.isAutoAudioEnabled && 
+  //       parsedAnswer?.markdownFormatText && 
+  //       answer.message_id !== undefined) {
+  //     // Petite délai pour s'assurer que le composant est rendu
+  //     setTimeout(() => {
+  //       playAudio()
+  //     }, 500)
+  //   }
+  // }, [parsedAnswer?.markdownFormatText, appStateContext?.state.isAutoAudioEnabled, answer.message_id])
 
   useEffect(() => {
     if (answer.message_id == undefined) return
@@ -196,6 +210,80 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     } catch (err) {
       console.error('Erreur lors de la copie:', err);
     }
+  }
+
+  const playAudio = () => {
+    if (!parsedAnswer?.markdownFormatText) return
+    
+    // Stopper la lecture en cours si elle existe
+    if (speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel()
+    }
+    
+    try {
+      // Nettoyer le texte des balises HTML et markdown
+      const cleanText = parsedAnswer.markdownFormatText
+        .replace(/<[^>]*>/g, '') // Supprimer les balises HTML
+        .replace(/\*\*([^*]+)\*\*/g, '$1') // Supprimer le markdown gras
+        .replace(/\*([^*]+)\*/g, '$1') // Supprimer le markdown italique
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Supprimer les liens markdown
+        .replace(/#{1,6}\s*/g, '') // Supprimer les titres markdown
+        .replace(/```[\s\S]*?```/g, 'code block') // Remplacer les blocs de code
+        .replace(/`([^`]+)`/g, '$1') // Supprimer le code inline
+        .trim()
+      
+      if (!cleanText) return
+      
+      const utterance = new SpeechSynthesisUtterance(cleanText)
+      utterance.lang = language === 'FR' ? 'fr-FR' : 'en-US'
+      utterance.rate = 0.9
+      utterance.pitch = 1
+      
+      utterance.onstart = () => {
+        setIsPlaying(true)
+      }
+      
+      utterance.onend = () => {
+        setIsPlaying(false)
+        setSpeechSynthesis(null)
+      }
+      
+      utterance.onerror = () => {
+        setIsPlaying(false)
+        setSpeechSynthesis(null)
+        console.error('Erreur lors de la lecture audio')
+      }
+      
+      setSpeechSynthesis(utterance)
+      window.speechSynthesis.speak(utterance)
+      setIsPlaying(true)
+    } catch (err) {
+      console.error('Erreur lors de la lecture audio:', err)
+    }
+  }
+
+  const stopAudio = () => {
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel()
+    }
+    setIsPlaying(false)
+    setSpeechSynthesis(null)
+  }
+
+  const toggleAudio = () => {
+    if (isPlaying) {
+      stopAudio()
+    } else {
+      playAudio()
+    }
+  }
+
+  const toggleAutoAudio = () => {
+    const newState = !appStateContext?.state.isAutoAudioEnabled
+    appStateContext?.dispatch({
+      type: 'TOGGLE_AUTO_AUDIO',
+      payload: newState
+    })
   }
 
   const shouldDisplayCitationLink = (citation : Citation) => {
@@ -460,6 +548,22 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
             <Stack.Item className={styles.answerHeader}>
               {(FEEDBACK_ENABLED && answer.message_id !== undefined) || (!FEEDBACK_ENABLED && answer.message_id !== undefined) ? (
                 <Stack horizontal horizontalAlign="space-between">
+                  {/* LECTURE AUDIO DÉSACTIVÉE TEMPORAIREMENT */}
+                  {/* {isPlaying ? (
+                    <SpeakerOff20Regular
+                      aria-hidden="false"
+                      aria-label={localizedStrings.stopAudio}
+                      onClick={stopAudio}
+                      style={{ color: '#d13438', cursor: 'pointer' }}
+                    />
+                  ) : (
+                    <Speaker120Regular
+                      aria-hidden="false"
+                      aria-label={localizedStrings.playAudio}
+                      onClick={playAudio}
+                      style={{ color: 'slategray', cursor: 'pointer' }}
+                    />
+                  )} */}
                   <Copy20Regular
                     aria-hidden="false"
                     aria-label={copySuccess ? localizedStrings.copied : localizedStrings.copyResponse}
@@ -537,6 +641,20 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
             <span className={styles.answerDisclaimer}>{localizedStrings.aiDisclaimer}</span>
+            {/* TOGGLE AUTO AUDIO DÉSACTIVÉ TEMPORAIREMENT */}
+            {/* <span 
+              className={styles.audioToggle}
+              onClick={toggleAutoAudio}
+              style={{ 
+                marginLeft: '10px', 
+                color: appStateContext?.state.isAutoAudioEnabled ? 'darkgreen' : 'slategray',
+                cursor: 'pointer',
+                fontSize: '12px'
+              }}
+              title={appStateContext?.state.isAutoAudioEnabled ? localizedStrings.disableAutoAudio : localizedStrings.enableAutoAudio}
+            >
+              🔊 {appStateContext?.state.isAutoAudioEnabled ? 'ON' : 'OFF'}
+            </span> */}
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>
@@ -679,6 +797,10 @@ let localizedStrings = new LocalizedStrings({
       openAttachment : "Ouvrir la pièce-jointe",
       copyResponse: "Copier la réponse",
       copied: "Copié!",
+      playAudio: "Lire la réponse",
+      stopAudio: "Arrêter la lecture",
+      enableAutoAudio: "Activer la lecture automatique",
+      disableAutoAudio: "Désactiver la lecture automatique",
       submitFeedbakc: "Soumette un avis",
       feedbackHelps: "Votre feedback nous permet d'améliorer votre expérience.",
       feedbackWillBVisible: "En validant, votre retour sera rendu visible pour les administrateurs de l'application.",
@@ -705,6 +827,10 @@ let localizedStrings = new LocalizedStrings({
       openAttachment : "Open attachment",
       copyResponse: "Copy response",
       copied: "Copied!",
+      playAudio: "Play audio",
+      stopAudio: "Stop audio",
+      enableAutoAudio: "Enable auto audio",
+      disableAutoAudio: "Disable auto audio",
       submitFeedbakc: "Submit Feedback",
       feedbackHelps: "Your feedback will improve this experience.",
       feedbackWillBVisible: "By pressing submit, your feedback will be visible to the application owner.",

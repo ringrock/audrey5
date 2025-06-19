@@ -15,7 +15,7 @@
 .questionInputTextArea {
   width: 100%;
   line-height: 40px;
-  margin-top: 10px;
+  margin-top: 15px;
   margin-bottom: 10px;
   margin-left: 12px;
   margin-right: 12px;
@@ -66,7 +66,7 @@
 .fileInputContainer {
   position: absolute;
   right: 24px;
-  top: 20px;
+  top: 8px;
 }
 
 .fileInput {
@@ -107,9 +107,10 @@
 }
 
 .uploadedImageContainer {
-  position: relative;
+  position: absolute;
+  bottom: 10px;
+  right: 24px;
   display: inline-block;
-  margin-right: 70px;
 }
 
 .uploadedImage {
@@ -198,7 +199,7 @@
 .voiceInputContainer {
   position: absolute;
   right: 60px;
-  top: 20px;
+  top: 8px;
 }
 
 .voiceButton {
@@ -222,6 +223,11 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.voiceButton.wakeWordListening {
+  background-color: #0078d4;
+  animation: breathe 3s ease-in-out infinite;
+}
+
 .voiceIcon {
   font-size: 18px;
   color: #424242;
@@ -232,6 +238,10 @@
 }
 
 .voiceButton.listening .voiceIcon {
+  color: #ffffff;
+}
+
+.voiceButton.wakeWordListening .voiceIcon {
   color: #ffffff;
 }
 
@@ -251,5 +261,20 @@
   100% {
     transform: scale(1);
     opacity: 1;
+  }
+}
+
+@keyframes breathe {
+  0% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
   }
 }

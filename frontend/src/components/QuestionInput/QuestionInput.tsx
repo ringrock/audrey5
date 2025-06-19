@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect, useRef } from 'react'
+import { useContext, useState, useEffect, useRef, useCallback } from 'react'
 import { FontIcon, Stack, TextField } from '@fluentui/react'
 import { SendRegular, Mic20Regular, MicOff20Regular } from '@fluentui/react-icons'
 
@@ -7,39 +7,7 @@ import Send from '../../assets/Send.svg'
 import styles from './QuestionInput.module.css'
 import { ChatMessage } from '../../api'
 import { AppStateContext } from '../../state/AppProvider'
-// import { resizeImage } from '../../utils/resizeImage' // Plus utilisé - redimensionnement côté backend
-import { uploadDocument, DocumentUploadResponse } from '../../api/api'
-
-// Extract key terms from document for search enhancement
-const extractKeywordsFromDocument = (text: string, maxKeywords: number = 8): string[] => {
-  // Clean and normalize text
-  const cleanText = text.toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  
-  const words = cleanText.split(' ')
-  
-  // Common stop words to filter out
-  const stopWords = new Set([
-    'le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'et', 'ou', 'mais', 'donc', 'car',
-    'ce', 'cette', 'ces', 'il', 'elle', 'ils', 'elles', 'je', 'tu', 'nous', 'vous',
-    'que', 'qui', 'quoi', 'comment', 'pourquoi', 'où', 'quand', 'dans', 'sur', 'avec',
-    'par', 'pour', 'sans', 'sous', 'entre', 'vers', 'chez', 'depuis', 'pendant',
-    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
-    'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after'
-  ])
-  
-  // Keep words that are longer than 2 chars and not stop words
-  const keywords = words
-    .filter(word => word.length > 2 && !stopWords.has(word))
-    .slice(0, maxKeywords * 2) // Take more initially
-  
-  // Remove duplicates and limit count
-  const uniqueKeywords = Array.from(new Set(keywords)).slice(0, maxKeywords)
-  
-  return uniqueKeywords
-}
+import { useVoiceRecognition } from '../../hooks/useVoiceRecognition'
 
 interface Props {
   onSend: (question: ChatMessage['content'], id?: string) => void
@@ -50,26 +18,48 @@ interface Props {
 }
 
 export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conversationId }: Props) => {
-  const [question, setQuestion] = useState<string>('')
   const [base64Image, setBase64Image] = useState<string | null>(null)
-  const [documentText, setDocumentText] = useState<string | null>(null)
-  const [documentInfo, setDocumentInfo] = useState<{name: string, type?: string} | null>(null)
   const [isUploading, setIsUploading] = useState<boolean>(false)
   const [userTypedQuestion, setUserTypedQuestion] = useState<string>('')
-
-  const [isInitialQuestionSet, setIsInitialQuestionSet] = useState(false);
+  const [isInitialQuestionSet, setIsInitialQuestionSet] = useState(false)
   
   // History management for arrow key navigation
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState<number>(-1)
   const [tempQuestion, setTempQuestion] = useState<string>('')
-
-  // Voice recognition states
-  const [isListening, setIsListening] = useState<boolean>(false)
-  const [speechSupported, setSpeechSupported] = useState<boolean>(false)
-  const recognitionRef = useRef<any>(null)
+  
+  const autoSendTimeoutRef = useRef<number | null>(null)
 
   const appStateContext = useContext(AppStateContext)
+  
+  // Configuration vocale depuis les paramètres
+  const voiceInputEnabled = appStateContext?.state.frontendSettings?.voice_input_enabled ?? true
+  const canUseWakeWord = appStateContext?.state.frontendSettings?.wake_word_enabled ?? true
+  const wakeWordEnabled = appStateContext?.state.frontendSettings?.wake_word_enabled ?? true
+  const wakeWordPhrases = appStateContext?.state.frontendSettings?.wake_word_phrases ?? ['asmi', 'askme', 'askmi', 'asqmi']
+  
+  // Use voice recognition hook
+  const voiceRecognition = useVoiceRecognition({
+    voiceInputEnabled,
+    canUseWakeWord,
+    wakeWordEnabled,
+    wakeWordPhrases
+  })
+
+  // Sync question state with voice recognition
+  const [question, setQuestion] = useState<string>('')
+  
+  useEffect(() => {
+    if (voiceRecognition.question !== question) {
+      setQuestion(voiceRecognition.question)
+    }
+  }, [voiceRecognition.question])
+
+  useEffect(() => {
+    if (question !== voiceRecognition.question) {
+      voiceRecognition.setQuestion(question)
+    }
+  }, [question])
   
   // Load history from localStorage on component mount
   useEffect(() => {
@@ -86,86 +76,19 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     }
   }, [])
 
-  // Initialize speech recognition
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    
-    if (SpeechRecognition) {
-      setSpeechSupported(true)
-      const recognition = new SpeechRecognition()
-      
-      recognition.continuous = false
-      recognition.interimResults = true
-      recognition.lang = 'fr-FR' // Français par défaut, peut être configuré
-      
-      recognition.onstart = () => {
-        setIsListening(true)
-        console.log('Speech recognition started')
-      }
-      
-      recognition.onresult = (event: any) => {
-        let transcript = ''
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript
-        }
-        
-        // Mettre à jour la question avec le texte reconnu
-        setQuestion(transcript)
-        
-        // Si le résultat est final, arrêter l'écoute
-        if (event.results[event.results.length - 1].isFinal) {
-          setIsListening(false)
-        }
-      }
-      
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error)
-        setIsListening(false)
-        
-        // Messages d'erreur localisés
-        let errorMessage = 'Erreur de reconnaissance vocale'
-        switch (event.error) {
-          case 'no-speech':
-            errorMessage = 'Aucune parole détectée. Veuillez réessayer.'
-            break
-          case 'audio-capture':
-            errorMessage = 'Microphone non accessible. Vérifiez les autorisations.'
-            break
-          case 'not-allowed':
-            errorMessage = 'Permission microphone refusée. Activez-la dans les paramètres du navigateur.'
-            break
-          case 'network':
-            errorMessage = 'Erreur réseau. Vérifiez votre connexion internet.'
-            break
-        }
-        
-        // Afficher l'erreur (vous pouvez remplacer par un toast ou notification)
-        console.warn(errorMessage)
-      }
-      
-      recognition.onend = () => {
-        setIsListening(false)
-        console.log('Speech recognition ended')
-      }
-      
-      recognitionRef.current = recognition
-    } else {
-      setSpeechSupported(false)
-      console.warn('Speech recognition not supported in this browser')
-    }
-    
-    // Cleanup function
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-    }
-  }, [])
-  const OYD_ENABLED = appStateContext?.state.frontendSettings?.oyd_enabled || false;
-  const currentProvider = appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI';
+  const OYD_ENABLED = appStateContext?.state.frontendSettings?.oyd_enabled || false
+  const currentProvider = appStateContext?.state.customizationPreferences?.llmProvider || 'AZURE_OPENAI'
   
   // Seuls Claude, Gemini et OpenAI Direct supportent les images
-  const supportsImages = ['CLAUDE', 'GEMINI', 'OPENAI_DIRECT'].includes(currentProvider);
+  const supportsImages = ['CLAUDE', 'GEMINI', 'OPENAI_DIRECT'].includes(currentProvider)
+
+  // Nettoyer l'image quand on change vers un provider qui ne supporte pas les images
+  useEffect(() => {
+    if (!supportsImages && base64Image) {
+      console.log('Clearing image because provider', currentProvider, 'does not support images')
+      setBase64Image(null)
+    }
+  }, [currentProvider, supportsImages, base64Image])
   
   // Messages d'info bulle par provider
   const getImageTooltip = () => {
@@ -183,33 +106,65 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     }
   }
 
-  const toggleVoiceRecognition = () => {
-    if (!speechSupported || !recognitionRef.current) {
+  const onPaste = (ev: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    // Vérifier si les images sont supportées par le provider actuel
+    if (!supportsImages) {
       return
     }
 
-    if (isListening) {
-      // Arrêter l'écoute
-      recognitionRef.current.stop()
-      setIsListening(false)
-    } else {
-      // Commencer l'écoute
-      try {
-        recognitionRef.current.start()
-      } catch (error) {
-        console.error('Failed to start speech recognition:', error)
-        setIsListening(false)
+    const clipboardData = ev.clipboardData
+    if (!clipboardData || !clipboardData.items) {
+      return
+    }
+
+    // Rechercher une image dans le presse-papier
+    for (let i = 0; i < clipboardData.items.length; i++) {
+      const item = clipboardData.items[i]
+      
+      if (item.type.startsWith('image/')) {
+        ev.preventDefault() // Empêcher le comportement par défaut du collage
+        
+        console.log('Image détectée dans le presse-papier:', item.type)
+        
+        // Récupérer le fichier depuis le presse-papier
+        const file = item.getAsFile()
+        if (file) {
+          console.log('Fichier image récupéré du presse-papier:', file.name || 'clipboard-image', file.type, file.size)
+          
+          // Réinitialiser les états précédents
+          setBase64Image(null)
+          
+          // Utiliser la même logique que pour l'upload de fichier
+          convertToBase64(file)
+            .then(() => {
+              console.log('Image du presse-papier traitée avec succès')
+            })
+            .catch((error) => {
+              console.error('Erreur lors du traitement de l\'image du presse-papier:', error)
+              if (error instanceof Error) {
+                alert(error.message)
+              }
+            })
+        }
+        
+        return // Sortir de la boucle une fois qu'une image est trouvée
       }
     }
   }
 
-  const getVoiceTooltip = () => {
-    if (!speechSupported) {
-      return "Reconnaissance vocale non supportée par ce navigateur"
+  // Auto-populate question if provided in URL params
+  useEffect(() => {
+    if (!isInitialQuestionSet) {
+      const urlParams = new URLSearchParams(window.location.search)
+      const questionParam = urlParams.get('question')
+      if (questionParam) {
+        setQuestion(decodeURIComponent(questionParam))
+        setIsInitialQuestionSet(true)
+      } else {
+        setIsInitialQuestionSet(true)
+      }
     }
-    
-    return isListening ? "Arrêter l'écoute" : "Commencer la dictée vocale"
-  }
+  }, [isInitialQuestionSet])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -218,10 +173,15 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       if (file) {
         console.log('File selected:', file.name, file.type, file.size)
         
+        // Vérifier si le provider actuel supporte les images
+        if (!supportsImages) {
+          alert(`Les images ne sont pas supportées par ${currentProvider}. Veuillez changer de fournisseur pour utiliser cette fonctionnalité.`)
+          event.target.value = ''
+          return
+        }
+        
         // Réinitialiser les états précédents
         setBase64Image(null)
-        setDocumentText(null)
-        setDocumentInfo(null)
         
         // Seules les images sont autorisées
         if (file.type.startsWith('image/')) {
@@ -231,25 +191,21 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             console.log('Image processing completed successfully')
           } catch (conversionError) {
             console.error('Image conversion failed:', conversionError)
-            // Optionnel : afficher l'erreur à l'utilisateur
-            if (conversionError instanceof Error) {
-              alert(conversionError.message)
-            }
+            alert('Erreur lors du traitement de l\'image. Veuillez réessayer.')
           }
         } else {
-          console.log('File rejected: not an image')
+          console.log('Non-image file selected, skipping...')
+          alert('Seules les images sont supportées.')
         }
-      } else {
-        console.log('No file selected')
+        
+        // Reset file input value pour permettre de sélectionner le même fichier
+        event.target.value = ''
       }
     } catch (error) {
       console.error('Error in handleFileUpload:', error)
-    } finally {
-      // IMPORTANT: Toujours réinitialiser l'input pour permettre la re-sélection du même fichier
-      event.target.value = ''
+      alert('Erreur lors du téléchargement du fichier. Veuillez réessayer.')
     }
   }
-
 
   const convertToBase64 = async (file: Blob) => {
     return new Promise<void>((resolve, reject) => {
@@ -313,7 +269,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     })
   }
 
-  const sendQuestion = () => {
+  const sendQuestion = useCallback(() => {
     if (disabled || !question.trim()) {
       return
     }
@@ -374,7 +330,28 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     if (clearOnSend) {
       setQuestion('')
     }
-  }
+  }, [disabled, question, base64Image, history, conversationId, onSend, clearOnSend])
+
+  // Auto-send effect for voice input
+  useEffect(() => {
+    if (voiceRecognition.voiceInputComplete && question.trim() && !disabled) {
+      // Délai de 2 secondes avant l'envoi automatique
+      autoSendTimeoutRef.current = setTimeout(() => {
+        if (question.trim() && !disabled) {
+          sendQuestion()
+          voiceRecognition.resetVoiceInput()
+        }
+        autoSendTimeoutRef.current = null
+      }, 2000)
+    }
+    
+    return () => {
+      if (autoSendTimeoutRef.current) {
+        clearTimeout(autoSendTimeoutRef.current)
+        autoSendTimeoutRef.current = null
+      }
+    }
+  }, [voiceRecognition.voiceInputComplete, question, disabled, sendQuestion, voiceRecognition.resetVoiceInput])
 
   const onEnterPress = (ev: React.KeyboardEvent<Element>) => {
     if (ev.key === 'Enter' && !ev.shiftKey && !(ev.nativeEvent?.isComposing === true)) {
@@ -391,103 +368,26 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       const newIndex = Math.min(historyIndex + 1, history.length - 1)
       setHistoryIndex(newIndex)
       setQuestion(history[newIndex])
-    } else if (ev.key === 'ArrowDown') {
+    } else if (ev.key === 'ArrowDown' && historyIndex >= 0) {
       ev.preventDefault()
       
-      if (historyIndex > 0) {
+      if (historyIndex === 0) {
+        // Return to original question
+        setHistoryIndex(-1)
+        setQuestion(tempQuestion)
+        setTempQuestion('')
+      } else {
+        // Go to more recent question
         const newIndex = historyIndex - 1
         setHistoryIndex(newIndex)
         setQuestion(history[newIndex])
-      } else if (historyIndex === 0) {
-        // Return to original/temp question
-        setHistoryIndex(-1)
-        setQuestion(tempQuestion)
       }
     }
   }
 
-  const onPaste = (ev: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    // Vérifier si les images sont supportées par le provider actuel
-    if (!supportsImages) {
-      return
-    }
 
-    const clipboardData = ev.clipboardData
-    if (!clipboardData || !clipboardData.items) {
-      return
-    }
 
-    // Rechercher une image dans le presse-papier
-    for (let i = 0; i < clipboardData.items.length; i++) {
-      const item = clipboardData.items[i]
-      
-      if (item.type.startsWith('image/')) {
-        ev.preventDefault() // Empêcher le comportement par défaut du collage
-        
-        console.log('Image détectée dans le presse-papier:', item.type)
-        
-        // Récupérer le fichier depuis le presse-papier
-        const file = item.getAsFile()
-        if (file) {
-          console.log('Fichier image récupéré du presse-papier:', file.name || 'clipboard-image', file.type, file.size)
-          
-          // Réinitialiser les états précédents
-          setBase64Image(null)
-          setDocumentText(null)
-          setDocumentInfo(null)
-          
-          // Utiliser la même logique que pour l'upload de fichier
-          convertToBase64(file)
-            .then(() => {
-              console.log('Image du presse-papier traitée avec succès')
-            })
-            .catch((error) => {
-              console.error('Erreur lors du traitement de l\'image du presse-papier:', error)
-              if (error instanceof Error) {
-                alert(error.message)
-              }
-            })
-        }
-        break // Sortir de la boucle après avoir trouvé la première image
-      }
-    }
-  }
-
-  const onQuestionChange = (_ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
-    setQuestion(newValue || '')
-    
-    // Reset history navigation if user is typing
-    if (historyIndex !== -1) {
-      setHistoryIndex(-1)
-      setTempQuestion('')
-    }
-  }
-
-  var sendQuestionDisabled = disabled || !question.trim()
-
-  useEffect(() => {
-    if (isInitialQuestionSet && question.trim() && !disabled) {
-      sendQuestion();
-      setIsInitialQuestionSet(false);
-      /* remise à vide de la question initiale */
-      appStateContext?.dispatch({ type: 'SET_INITIAL_QUESTION', payload: "" });
-    }
-  }, [question, disabled, isInitialQuestionSet]);
-
-  useEffect(() => {
-    if (appStateContext?.state.initialQuestion) {
-      setQuestion(appStateContext.state.initialQuestion);
-      setIsInitialQuestionSet(true);
-    }
-  }, [appStateContext?.state.initialQuestion]);
-
-  // Nettoyer l'image quand on change vers un provider qui ne supporte pas les images
-  useEffect(() => {
-    if (!supportsImages && base64Image) {
-      console.log('Clearing image because provider', currentProvider, 'does not support images')
-      setBase64Image(null)
-    }
-  }, [currentProvider, supportsImages, base64Image]);
+  const disableRequiredAccessControl = false
 
   return (
     <Stack horizontal className={styles.questionInputContainer}>
@@ -498,7 +398,10 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         resizable={false}
         borderless
         value={question}
-        onChange={onQuestionChange}
+        onChange={(_ev, newValue) => {
+          setQuestion(newValue || '')
+          setUserTypedQuestion(newValue || '')
+        }}
         onKeyDown={onEnterPress}
         onPaste={onPaste}
       />
@@ -506,7 +409,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         <input
           type="file"
           id="fileInput"
-          onChange={(event) => handleFileUpload(event)}
+          onChange={handleFileUpload}
           accept="image/*"
           className={styles.fileInput}
           disabled={!supportsImages || isUploading}
@@ -524,22 +427,36 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
           />
         </label>
       </div>
-      <div className={styles.voiceInputContainer}>
-        <button
-          type="button"
-          className={`${styles.voiceButton} ${!speechSupported ? styles.disabled : ''} ${isListening ? styles.listening : ''}`}
-          onClick={toggleVoiceRecognition}
-          disabled={!speechSupported}
-          aria-label={getVoiceTooltip()}
-          title={getVoiceTooltip()}
-        >
-          {isListening ? (
-            <MicOff20Regular className={styles.voiceIcon} />
-          ) : (
-            <Mic20Regular className={styles.voiceIcon} />
-          )}
-        </button>
-      </div>
+      {voiceInputEnabled && voiceRecognition.speechSupported && (
+        <div className={styles.voiceInputContainer}>
+          <button
+            type="button"
+            className={`${styles.voiceButton} ${!voiceRecognition.speechSupported ? styles.disabled : ''} ${voiceRecognition.isListening ? styles.listening : ''} ${voiceRecognition.isWakeWordListening && !voiceRecognition.isListening ? styles.wakeWordListening : ''}`}
+            onClick={voiceRecognition.toggleWakeWord}
+            disabled={!voiceRecognition.speechSupported}
+            aria-label={
+              voiceRecognition.isWakeWordListening 
+                ? "Mode écoute active (double-clic pour désactiver)" 
+                : voiceRecognition.isListening 
+                  ? "Reconnaissance vocale en cours..." 
+                  : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
+            }
+            title={
+              voiceRecognition.isWakeWordListening 
+                ? "Mode écoute active (double-clic pour désactiver)" 
+                : voiceRecognition.isListening 
+                  ? "Reconnaissance vocale en cours..." 
+                  : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
+            }
+          >
+            {voiceRecognition.isListening ? (
+              <MicOff20Regular className={styles.voiceIcon} />
+            ) : (
+              <Mic20Regular className={styles.voiceIcon} />
+            )}
+          </button>
+        </div>
+      )}
       {base64Image && (
         <div className={styles.uploadedImageContainer}>
           <img className={styles.uploadedImage} src={base64Image} alt="Uploaded Preview" />
@@ -560,7 +477,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         aria-label="Ask question button"
         onClick={sendQuestion}
         onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? sendQuestion() : null)}>
-        {sendQuestionDisabled ? (
+        {disabled ? (
           <SendRegular className={styles.questionInputSendButtonDisabled} />
         ) : (
           <img src={Send} className={styles.questionInputSendButton} alt="Send Button" />
