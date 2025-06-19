@@ -19,7 +19,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from backend.settings import app_settings
-from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
+from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError, handle_provider_errors
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
 from .language_detection import get_system_message_for_language
@@ -95,6 +95,7 @@ class ClaudeProvider(LLMProvider):
         self.initialized = True
         self.logger.info("Claude provider initialized successfully")
     
+    @handle_provider_errors("CLAUDE")
     async def send_request(
         self, 
         messages: List[Dict[str, Any]], 
@@ -121,173 +122,162 @@ class ClaudeProvider(LLMProvider):
         
         self.logger.debug(f"Claude: send_request called with stream={stream}")
         
-        try:
-            # Reset citation state for new request
-            self._current_search_citations = None
-            
-            
-            # Detect language from user's last message using LLM for accuracy
-            # Skip language detection if this is an internal call to avoid recursion
-            if kwargs.get("_skip_language_detection", False):
-                detected_language = "en"  # Default for internal calls
-                self.logger.debug("Skipping language detection for internal call")
-            else:
-                user_message = messages[-1]["content"] if messages else ""
-                detected_language = await self.detect_language_with_llm(user_message)
-                self.logger.debug(f"Detected language: {detected_language}")
-            
-            
-            # Convert messages from OpenAI to Claude format with language awareness
-            claude_messages = self._convert_messages_to_claude_format(messages, detected_language)
-            
-            
-            # About to enhance with search context
-            
-            # Perform Azure Search if configured and inject context
-            claude_messages = await self._enhance_with_search_context(claude_messages, detected_language=detected_language, **kwargs)
-            
-            # Search context enhancement completed
-            
-            # Get max_tokens based on response size
-            response_size = kwargs.get("response_size", "medium")
-            max_tokens = self._get_max_tokens_for_response_size("claude", response_size)
-            
-            # Extract system message if present and use dedicated system parameter
-            system_message = None
-            clean_messages = []
-            
-            for msg in claude_messages:
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    # Check if this message contains system instructions
-                    if isinstance(content, str) and content.startswith(("Tu es un assistant", "You are an assistant", "Eres un asistente")):
-                        # Extract system part and user part
-                        parts = content.split("\n\nQuestion de l'utilisateur:", 1)
+        # Reset citation state for new request
+        self._current_search_citations = None
+        
+        # Detect language from user's last message using LLM for accuracy
+        # Skip language detection if this is an internal call to avoid recursion
+        if kwargs.get("_skip_language_detection", False):
+            detected_language = "en"  # Default for internal calls
+            self.logger.debug("Skipping language detection for internal call")
+        else:
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = await self.detect_language_with_llm(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+        
+        # Convert messages from OpenAI to Claude format with language awareness
+        claude_messages = self._convert_messages_to_claude_format(messages, detected_language)
+        
+        # Perform Azure Search if configured and inject context
+        claude_messages = await self._enhance_with_search_context(claude_messages, detected_language=detected_language, **kwargs)
+        
+        # Get max_tokens based on response size
+        response_size = kwargs.get("response_size", "medium")
+        max_tokens = self._get_max_tokens_for_response_size("claude", response_size)
+        
+        # Extract system message if present and use dedicated system parameter
+        system_message = None
+        clean_messages = []
+        
+        for msg in claude_messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                # Check if this message contains system instructions
+                if isinstance(content, str) and content.startswith(("Tu es un assistant", "You are an assistant", "Eres un asistente")):
+                    # Extract system part and user part
+                    parts = content.split("\n\nQuestion de l'utilisateur:", 1)
+                    if len(parts) == 2:
+                        system_message = parts[0]
+                        clean_messages.append({
+                            "role": "user",
+                            "content": f"Question de l'utilisateur:{parts[1]}"
+                        })
+                    else:
+                        # Try other patterns
+                        parts = content.split("\n\nUser question:", 1)
                         if len(parts) == 2:
                             system_message = parts[0]
                             clean_messages.append({
-                                "role": "user",
-                                "content": f"Question de l'utilisateur:{parts[1]}"
+                                "role": "user", 
+                                "content": f"User question:{parts[1]}"
                             })
                         else:
-                            # Try other patterns
-                            parts = content.split("\n\nUser question:", 1)
+                            parts = content.split("\n\nPregunta del usuario:", 1)
                             if len(parts) == 2:
                                 system_message = parts[0]
                                 clean_messages.append({
-                                    "role": "user", 
-                                    "content": f"User question:{parts[1]}"
+                                    "role": "user",
+                                    "content": f"Pregunta del usuario:{parts[1]}"
                                 })
                             else:
-                                parts = content.split("\n\nPregunta del usuario:", 1)
+                                # No clear split found, keep as is
+                                clean_messages.append(msg)
+                elif isinstance(content, list):
+                    # Handle multimodal content
+                    enhanced_content = []
+                    extracted_system = None
+                    
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if text.startswith(("Tu es un assistant", "You are an assistant", "Eres un asistente")):
+                                # Extract system part
+                                parts = text.split("\n\nQuestion de l'utilisateur:", 1)
                                 if len(parts) == 2:
-                                    system_message = parts[0]
-                                    clean_messages.append({
-                                        "role": "user",
-                                        "content": f"Pregunta del usuario:{parts[1]}"
+                                    extracted_system = parts[0]
+                                    enhanced_content.append({
+                                        "type": "text",
+                                        "text": f"Question de l'utilisateur:{parts[1]}"
                                     })
                                 else:
-                                    # No clear split found, keep as is
-                                    clean_messages.append(msg)
-                    elif isinstance(content, list):
-                        # Handle multimodal content
-                        enhanced_content = []
-                        extracted_system = None
-                        
-                        for part in content:
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                text = part.get("text", "")
-                                if text.startswith(("Tu es un assistant", "You are an assistant", "Eres un asistente")):
-                                    # Extract system part
-                                    parts = text.split("\n\nQuestion de l'utilisateur:", 1)
+                                    # Try other patterns
+                                    parts = text.split("\n\nUser question:", 1)
                                     if len(parts) == 2:
                                         extracted_system = parts[0]
                                         enhanced_content.append({
                                             "type": "text",
-                                            "text": f"Question de l'utilisateur:{parts[1]}"
+                                            "text": f"User question:{parts[1]}"
                                         })
                                     else:
-                                        # Try other patterns
-                                        parts = text.split("\n\nUser question:", 1)
+                                        parts = text.split("\n\nPregunta del usuario:", 1)
                                         if len(parts) == 2:
                                             extracted_system = parts[0]
                                             enhanced_content.append({
-                                                "type": "text",
-                                                "text": f"User question:{parts[1]}"
+                                                "type": "text", 
+                                                "text": f"Pregunta del usuario:{parts[1]}"
                                             })
                                         else:
-                                            parts = text.split("\n\nPregunta del usuario:", 1)
-                                            if len(parts) == 2:
-                                                extracted_system = parts[0]
-                                                enhanced_content.append({
-                                                    "type": "text", 
-                                                    "text": f"Pregunta del usuario:{parts[1]}"
-                                                })
-                                            else:
-                                                enhanced_content.append(part)
-                                else:
-                                    enhanced_content.append(part)
+                                            enhanced_content.append(part)
                             else:
                                 enhanced_content.append(part)
-                        
-                        if extracted_system:
-                            system_message = extracted_system
-                        
-                        clean_messages.append({
-                            "role": "user",
-                            "content": enhanced_content
-                        })
-                    else:
-                        clean_messages.append(msg)
+                        else:
+                            enhanced_content.append(part)
+                    
+                    if extracted_system:
+                        system_message = extracted_system
+                    
+                    clean_messages.append({
+                        "role": "user",
+                        "content": enhanced_content
+                    })
                 else:
                     clean_messages.append(msg)
-            
-            # Build Claude API request with dedicated system parameter
-            request_body = {
-                "model": self.model,
-                "messages": clean_messages,
-                "max_tokens": max_tokens,
-                "temperature": kwargs.get("temperature", app_settings.claude.temperature),
-                "stream": stream
-            }
-            
-            # Add system message if extracted
-            if system_message:
-                request_body["system"] = system_message
-                self.logger.debug(f"Claude: Using dedicated system parameter with {len(system_message)} chars")
-            
-            
-            # Add optional parameters
-            if kwargs.get("top_p"):
-                request_body["top_p"] = kwargs["top_p"]
-            if kwargs.get("stop"):
-                stop_sequences = kwargs["stop"] if isinstance(kwargs["stop"], list) else [kwargs["stop"]]
-                request_body["stop_sequences"] = stop_sequences
-            
-            self.logger.debug(f"Claude API request: stream={stream}, messages={len(claude_messages)}")
-            
-            # Log message count for debugging
-            self.logger.debug(f"Claude: sending {len(claude_messages)} messages to API")
-            
-            # Configure request headers
-            headers = {
-                "Content-Type": "application/json",
-                "X-API-Key": self.api_key,
-                "anthropic-version": "2023-06-01"
-            }
-            
-            if stream:
-                # Return streaming generator
-                generator = self._create_streaming_generator(request_body, headers)
-                return generator, None  # (response, apim_request_id)
             else:
-                # Make non-streaming request
-                response = await self._make_non_streaming_request(request_body, headers)
-                return response, None  # (response, apim_request_id)
-                
-        except Exception as e:
-            self.logger.error(f"Claude request failed: {e}")
-            raise LLMProviderRequestError(f"Claude request failed: {e}")
+                clean_messages.append(msg)
+        
+        # Build Claude API request with dedicated system parameter
+        request_body = {
+            "model": self.model,
+            "messages": clean_messages,
+            "max_tokens": max_tokens,
+            "temperature": kwargs.get("temperature", app_settings.claude.temperature),
+            "stream": stream
+        }
+        
+        # Add system message if extracted
+        if system_message:
+            request_body["system"] = system_message
+            self.logger.debug(f"Claude: Using dedicated system parameter with {len(system_message)} chars")
+        
+        # Add optional parameters
+        if kwargs.get("top_p"):
+            request_body["top_p"] = kwargs["top_p"]
+        if kwargs.get("stop"):
+            stop_sequences = kwargs["stop"] if isinstance(kwargs["stop"], list) else [kwargs["stop"]]
+            request_body["stop_sequences"] = stop_sequences
+        
+        self.logger.debug(f"Claude API request: stream={stream}, messages={len(claude_messages)}")
+        
+        # Log message count for debugging
+        self.logger.debug(f"Claude: sending {len(claude_messages)} messages to API")
+        
+        # Configure request headers
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": self.api_key,
+            "anthropic-version": "2023-06-01"
+        }
+        
+        if stream:
+            # Return streaming generator
+            generator = self._create_streaming_generator(request_body, headers)
+            return generator, None  # (response, apim_request_id)
+        else:
+            # Make non-streaming request
+            response = await self._make_non_streaming_request(request_body, headers)
+            return response, None  # (response, apim_request_id)
+            
+        # Error handling is now done by the @handle_provider_errors decorator
     
     def format_response(
         self, 

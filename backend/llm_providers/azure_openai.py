@@ -21,7 +21,7 @@ from openai import AsyncAzureOpenAI
 from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
 
 from backend.settings import app_settings
-from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
+from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError, handle_provider_errors
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .language_detection import get_system_message_for_language
 from .i18n import (
@@ -109,6 +109,7 @@ class AzureOpenAIProvider(LLMProvider):
             self.logger.error(f"Failed to initialize Azure OpenAI client: {e}")
             raise LLMProviderInitializationError(f"Azure OpenAI initialization failed: {e}")
     
+    @handle_provider_errors("AZURE_OPENAI")
     async def send_request(
         self, 
         messages: List[Dict[str, Any]], 
@@ -131,136 +132,133 @@ class AzureOpenAIProvider(LLMProvider):
         """
         await self.init_client()
         
-        try:
-            # Detect language from user's last message using LLM for accuracy
-            # Skip language detection if this is an internal call to avoid recursion
-            if kwargs.get("_skip_language_detection", False):
-                detected_language = "en"  # Default for internal calls
-                self.logger.debug("Skipping language detection for internal call")
+        # Detect language from user's last message using LLM for accuracy
+        # Skip language detection if this is an internal call to avoid recursion
+        if kwargs.get("_skip_language_detection", False):
+            detected_language = "en"  # Default for internal calls
+            self.logger.debug("Skipping language detection for internal call")
+        else:
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = await self.detect_language_with_llm(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+        
+        # Get max_tokens based on response size
+        response_size = kwargs.get("response_size", "medium")
+        max_tokens = self._get_max_tokens_for_response_size("azure_openai", response_size)
+        
+        # For Azure OpenAI, we handle both language and response size instructions:
+        # - If datasource is configured: inject into role_information (done in _build_azure_search_extra_body)
+        # - If no datasource: enhance system message normally
+        if app_settings.datasource:
+            # Don't enhance messages here - will be handled in datasource role_information
+            enhanced_messages = messages
+            self.logger.debug("Azure OpenAI with datasource: language and response size instructions will be in role_information")
+            
+            # Still process images even with datasource
+            enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
+        else:
+            # No datasource - enhance system message with language awareness
+            enhanced_messages = self._enhance_messages_with_language_and_response_size(messages, detected_language, response_size)
+            self.logger.debug(f"Azure OpenAI without datasource: enhanced system message with {detected_language} language and {response_size} response size instructions")
+            
+            # Process images for optimal Azure OpenAI performance  
+            enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
+        
+        # Build request parameters with defaults from settings
+        model_args = {
+            "messages": enhanced_messages,
+            "temperature": kwargs.get("temperature", app_settings.azure_openai.temperature),
+            "max_tokens": max_tokens,
+            "top_p": kwargs.get("top_p", app_settings.azure_openai.top_p),
+            "stop": kwargs.get("stop", app_settings.azure_openai.stop_sequence),
+            "stream": stream,
+            "model": kwargs.get("model", app_settings.azure_openai.model),
+            "user": kwargs.get("user"),
+        }
+        
+        # Add Azure Search integration via data_sources (Azure OpenAI "On Your Data")
+        # Remove response_size from kwargs to avoid conflict with explicit parameter
+        kwargs_clean = {k: v for k, v in kwargs.items() if k != 'response_size'}
+        extra_body = self._build_azure_search_extra_body(detected_language=detected_language, response_size=response_size, **kwargs_clean)
+        if extra_body:
+            model_args["extra_body"] = extra_body
+            self.logger.debug("Added Azure Search data_sources to request with multilingual support")
+        
+        # Add optional parameters if provided
+        if "tools" in kwargs:
+            model_args["tools"] = kwargs["tools"]
+        # Manual extra_body parameter overrides automatic data_sources
+        if "extra_body" in kwargs:
+            model_args["extra_body"] = kwargs["extra_body"]
+            self.logger.debug("Using manual extra_body parameter")
+        
+        self.logger.debug(f"Sending request to Azure OpenAI: stream={stream}, model={model_args['model']}")
+        self.logger.debug(f"Number of messages: {len(model_args.get('messages', []))}")
+        
+        # Check if model supports images and validate multimodal content
+        vision_models = ["gpt-4-vision-preview", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-turbo-vision"]
+        has_images = False
+        
+        for i, msg in enumerate(model_args.get("messages", [])):
+            if isinstance(msg.get("content"), list):
+                self.logger.debug(f"Message {i} has multimodal content with {len(msg['content'])} parts")
+                for j, part in enumerate(msg["content"]):
+                    if part.get("type") == "image_url":
+                        has_images = True
+                        image_url = part.get("image_url", {}).get("url", "")
+                        if image_url.startswith("data:"):
+                            # Extract format info without logging the actual data
+                            header = image_url.split(",")[0]
+                            data_size = len(image_url.split(",", 1)[1]) if "," in image_url else 0
+                            self.logger.debug(f"  Part {j}: Image {header}, data size: {data_size} chars")
+                            
+                            # Check image size (Azure OpenAI limit is around 20MB for base64)
+                            if data_size > 20000000:  # 20MB
+                                error_msg = get_image_too_large_message(detected_language, data_size)
+                                self.logger.error(error_msg)
+                                raise LLMProviderRequestError(error_msg)
+                            
+                            # Check supported formats
+                            supported_formats = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+                            format_from_header = header.replace("data:", "").split(";")[0]
+                            if format_from_header not in supported_formats:
+                                error_msg = get_image_format_unsupported_message(detected_language, format_from_header, supported_formats)
+                                self.logger.error(error_msg)
+                                raise LLMProviderRequestError(error_msg)
+        
+        # Validate model supports images if images are present
+        if has_images:
+            # Use the actual model name from settings if available
+            actual_model_name = app_settings.azure_openai.model_name or model_args['model']
+            deployment_name = model_args['model']
+            
+            self.logger.info(f"Deployment: '{deployment_name}', Actual model: '{actual_model_name}'")
+            
+            # Check if the actual model supports vision
+            current_model = actual_model_name.lower()
+            
+            # If AZURE_OPENAI_MODEL_NAME is not set (deployment name == model name), allow bypass
+            if actual_model_name == deployment_name:
+                warning_msg = get_model_name_not_configured_message(detected_language, deployment_name)
+                self.logger.warning(warning_msg)
+            elif not any(vision_model.lower() in current_model for vision_model in vision_models):
+                error_msg = get_model_no_image_support_message(detected_language, actual_model_name)
+                self.logger.error(error_msg)
+                raise LLMProviderRequestError(error_msg)
             else:
-                user_message = messages[-1]["content"] if messages else ""
-                detected_language = await self.detect_language_with_llm(user_message)
-                self.logger.debug(f"Detected language: {detected_language}")
-            
-            # Get max_tokens based on response size
-            response_size = kwargs.get("response_size", "medium")
-            max_tokens = self._get_max_tokens_for_response_size("azure_openai", response_size)
-            
-            # For Azure OpenAI, we handle both language and response size instructions:
-            # - If datasource is configured: inject into role_information (done in _build_azure_search_extra_body)
-            # - If no datasource: enhance system message normally
-            if app_settings.datasource:
-                # Don't enhance messages here - will be handled in datasource role_information
-                enhanced_messages = messages
-                self.logger.debug("Azure OpenAI with datasource: language and response size instructions will be in role_information")
-                
-                # Still process images even with datasource
-                enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
-            else:
-                # No datasource - enhance system message with language awareness
-                enhanced_messages = self._enhance_messages_with_language_and_response_size(messages, detected_language, response_size)
-                self.logger.debug(f"Azure OpenAI without datasource: enhanced system message with {detected_language} language and {response_size} response size instructions")
-                
-                # Process images for optimal Azure OpenAI performance  
-                enhanced_messages = self._process_images_for_azure_openai(enhanced_messages)
-            
-            # Build request parameters with defaults from settings
-            model_args = {
-                "messages": enhanced_messages,
-                "temperature": kwargs.get("temperature", app_settings.azure_openai.temperature),
-                "max_tokens": max_tokens,
-                "top_p": kwargs.get("top_p", app_settings.azure_openai.top_p),
-                "stop": kwargs.get("stop", app_settings.azure_openai.stop_sequence),
-                "stream": stream,
-                "model": kwargs.get("model", app_settings.azure_openai.model),
-                "user": kwargs.get("user"),
-            }
-            
-            # Add Azure Search integration via data_sources (Azure OpenAI "On Your Data")
-            # Remove response_size from kwargs to avoid conflict with explicit parameter
-            kwargs_clean = {k: v for k, v in kwargs.items() if k != 'response_size'}
-            extra_body = self._build_azure_search_extra_body(detected_language=detected_language, response_size=response_size, **kwargs_clean)
-            if extra_body:
-                model_args["extra_body"] = extra_body
-                self.logger.debug("Added Azure Search data_sources to request with multilingual support")
-            
-            # Add optional parameters if provided
-            if "tools" in kwargs:
-                model_args["tools"] = kwargs["tools"]
-            # Manual extra_body parameter overrides automatic data_sources
-            if "extra_body" in kwargs:
-                model_args["extra_body"] = kwargs["extra_body"]
-                self.logger.debug("Using manual extra_body parameter")
-            
-            self.logger.debug(f"Sending request to Azure OpenAI: stream={stream}, model={model_args['model']}")
-            self.logger.debug(f"Number of messages: {len(model_args.get('messages', []))}")
-            
-            # Check if model supports images and validate multimodal content
-            vision_models = ["gpt-4-vision-preview", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4-turbo-vision"]
-            has_images = False
-            
-            for i, msg in enumerate(model_args.get("messages", [])):
-                if isinstance(msg.get("content"), list):
-                    self.logger.debug(f"Message {i} has multimodal content with {len(msg['content'])} parts")
-                    for j, part in enumerate(msg["content"]):
-                        if part.get("type") == "image_url":
-                            has_images = True
-                            image_url = part.get("image_url", {}).get("url", "")
-                            if image_url.startswith("data:"):
-                                # Extract format info without logging the actual data
-                                header = image_url.split(",")[0]
-                                data_size = len(image_url.split(",", 1)[1]) if "," in image_url else 0
-                                self.logger.debug(f"  Part {j}: Image {header}, data size: {data_size} chars")
-                                
-                                # Check image size (Azure OpenAI limit is around 20MB for base64)
-                                if data_size > 20000000:  # 20MB
-                                    error_msg = get_image_too_large_message(detected_language, data_size)
-                                    self.logger.error(error_msg)
-                                    raise LLMProviderRequestError(error_msg)
-                                
-                                # Check supported formats
-                                supported_formats = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-                                format_from_header = header.replace("data:", "").split(";")[0]
-                                if format_from_header not in supported_formats:
-                                    error_msg = get_image_format_unsupported_message(detected_language, format_from_header, supported_formats)
-                                    self.logger.error(error_msg)
-                                    raise LLMProviderRequestError(error_msg)
-            
-            # Validate model supports images if images are present
-            if has_images:
-                # Use the actual model name from settings if available
-                actual_model_name = app_settings.azure_openai.model_name or model_args['model']
-                deployment_name = model_args['model']
-                
-                self.logger.info(f"Deployment: '{deployment_name}', Actual model: '{actual_model_name}'")
-                
-                # Check if the actual model supports vision
-                current_model = actual_model_name.lower()
-                
-                # If AZURE_OPENAI_MODEL_NAME is not set (deployment name == model name), allow bypass
-                if actual_model_name == deployment_name:
-                    warning_msg = get_model_name_not_configured_message(detected_language, deployment_name)
-                    self.logger.warning(warning_msg)
-                elif not any(vision_model.lower() in current_model for vision_model in vision_models):
-                    error_msg = get_model_no_image_support_message(detected_language, actual_model_name)
-                    self.logger.error(error_msg)
-                    raise LLMProviderRequestError(error_msg)
-                else:
-                    info_msg = get_model_vision_detected_message(detected_language, actual_model_name)
-                    self.logger.info(info_msg)
-            
-            # Make the request with raw response to get headers
-            raw_response = await self.client.chat.completions.with_raw_response.create(**model_args)
-            response = raw_response.parse()
-            apim_request_id = raw_response.headers.get("apim-request-id")
-            
-            self.logger.debug(f"Azure OpenAI request completed, APIM ID: {apim_request_id}")
-            
-            return response, apim_request_id
-            
-        except Exception as e:
-            self.logger.error(f"Azure OpenAI request failed: {e}")
-            raise LLMProviderRequestError(f"Azure OpenAI request failed: {e}")
+                info_msg = get_model_vision_detected_message(detected_language, actual_model_name)
+                self.logger.info(info_msg)
+        
+        # Make the request with raw response to get headers
+        raw_response = await self.client.chat.completions.with_raw_response.create(**model_args)
+        response = raw_response.parse()
+        apim_request_id = raw_response.headers.get("apim-request-id")
+        
+        self.logger.debug(f"Azure OpenAI request completed, APIM ID: {apim_request_id}")
+        
+        return response, apim_request_id
+        
+        # Error handling is now done by the @handle_provider_errors decorator
     
     def format_response(
         self, 

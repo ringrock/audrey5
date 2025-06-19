@@ -740,6 +740,15 @@ const Chat = () => {
   }
 
   const parseErrorMessage = (errorMessage: string) => {
+    // If this is already a user-friendly message from our error handler, return as-is
+    if (typeof errorMessage === 'string' && 
+        (errorMessage.includes('Trop de requêtes') || 
+         errorMessage.includes('Problème d\'authentification') ||
+         errorMessage.includes('Erreur temporaire') ||
+         errorMessage.includes('Problème de connexion'))) {
+      return errorMessage
+    }
+
     let errorCodeMessage = errorMessage.substring(0, errorMessage.indexOf('-') + 1)
     const innerErrorCue = "{\\'error\\': {\\'message\\': "
     if (errorMessage.includes(innerErrorCue)) {

@@ -416,8 +416,22 @@ async def send_chat_request(request_body, request_headers, shouldStream = True):
         
         return response, apim_request_id
     except Exception as e:
+        from backend.llm_providers.errors import LLMProviderErrorHandler
+        
         logging.exception(f"Exception in send_chat_request with provider {provider_type}")
-        raise e
+        
+        # Create user-friendly error and re-raise with enhanced message
+        user_message, status_code = LLMProviderErrorHandler.handle_provider_error(
+            exception=e,
+            provider_name=provider_type,
+            language="fr"  # Default to French for AskMe
+        )
+        
+        # Create a new exception with user-friendly message but preserve original for debugging
+        enhanced_error = Exception(user_message)
+        enhanced_error.status_code = status_code
+        enhanced_error.original_error = e
+        raise enhanced_error
 
 
 async def complete_chat_request(request_body, request_headers):
@@ -622,7 +636,13 @@ async def conversation_internal(request_body, request_headers, preventShouldStre
         if app_settings.azure_openai.stream and not app_settings.base_settings.use_promptflow and not preventShouldStream:
             logging.debug("Using streaming chat request")
             result = await stream_chat_request(request_body, request_headers)
-            response = await make_response(format_as_ndjson(result))
+            
+            # Extract provider name for better error messages
+            provider_type = request_body.get("provider") or \
+                           request_body.get("customizationPreferences", {}).get("llmProvider") or \
+                           "AZURE_OPENAI"
+            
+            response = await make_response(format_as_ndjson(result, provider_name=provider_type))
             response.timeout = None
             response.mimetype = "application/json-lines"
             return response
@@ -633,11 +653,24 @@ async def conversation_internal(request_body, request_headers, preventShouldStre
             return jsonify(result)
 
     except Exception as ex:
+        from backend.llm_providers.errors import LLMProviderErrorHandler
+        
         logging.exception(f"Exception in conversation_internal: {ex}")
-        if hasattr(ex, "status_code"):
-            return jsonify({"error": str(ex)}), ex.status_code
+        
+        # Check if this is already an enhanced error with user-friendly message
+        if hasattr(ex, 'original_error'):
+            # Already processed by our error handler
+            error_message = str(ex)
+            status_code = getattr(ex, 'status_code', 500)
         else:
-            return jsonify({"error": str(ex)}), 500
+            # Process with our error handler
+            error_message, status_code = LLMProviderErrorHandler.handle_provider_error(
+                exception=ex,
+                provider_name="SYSTEM",
+                language="fr"
+            )
+        
+        return jsonify({"error": error_message}), status_code
 
 def CheckAuthenticate(request):
     return True
@@ -818,8 +851,18 @@ async def add_conversation():
         return await conversation_internal(request_json, request.headers)
 
     except Exception as e:
+        from backend.llm_providers.errors import LLMProviderErrorHandler
+        
         logging.exception("Exception in /history/generate")
-        return jsonify({"error": str(e)}), 500
+        
+        # Create user-friendly error message
+        error_message, status_code = LLMProviderErrorHandler.handle_provider_error(
+            exception=e,
+            provider_name="HISTORY_SERVICE",
+            language="fr"
+        )
+        
+        return jsonify({"error": error_message}), status_code
 
 
 @bp.route("/history/update", methods=["POST"])

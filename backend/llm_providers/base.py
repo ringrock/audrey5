@@ -15,6 +15,7 @@ Key Design Principles:
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, AsyncGenerator, Union
+import functools
 
 from .models import StandardResponse, StandardResponseAdapter
 from .language_detection import get_system_message_for_language
@@ -409,3 +410,38 @@ class LLMProviderRequestError(LLMProviderError):
 class LLMProviderResponseError(LLMProviderError):
     """Raised when response formatting fails."""
     pass
+
+
+def handle_provider_errors(provider_name: str):
+    """
+    Decorator for uniform error handling across ALL LLM providers.
+    
+    This decorator should be applied to send_request methods of all providers
+    to ensure consistent error handling and user-friendly messages.
+    
+    Args:
+        provider_name: Name of the LLM provider (AZURE_OPENAI, CLAUDE, etc.)
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            try:
+                return await func(self, *args, **kwargs)
+            except Exception as e:
+                from .errors import LLMProviderErrorHandler
+                
+                # Log the original error for debugging
+                self.logger.error(f"{provider_name} request failed: {e}")
+                
+                # Create user-friendly error message
+                user_message, _ = LLMProviderErrorHandler.handle_provider_error(
+                    exception=e,
+                    provider_name=provider_name,
+                    language="fr"  # Default to French for AskMe
+                )
+                
+                # Raise with user-friendly message but preserve technical details
+                raise LLMProviderRequestError(f"{user_message} (Details: {str(e)})")
+        
+        return wrapper
+    return decorator

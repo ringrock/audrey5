@@ -19,7 +19,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from backend.settings import app_settings
-from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
+from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError, handle_provider_errors
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
 from .language_detection import get_system_message_for_language
@@ -76,6 +76,7 @@ class MistralProvider(LLMProvider):
             
         self.initialized = True
     
+    @handle_provider_errors("MISTRAL")
     async def send_request(
         self, 
         messages: List[Dict[str, Any]], 
@@ -100,68 +101,65 @@ class MistralProvider(LLMProvider):
         """
         await self.init_client()
         
-        try:
-            # Reset citation state for new request
-            self._current_search_citations = None
+        # Reset citation state for new request
+        self._current_search_citations = None
+        
+        # Detect language from user's last message using LLM for accuracy
+        # Skip language detection if this is an internal call to avoid recursion
+        if kwargs.get("_skip_language_detection", False):
+            detected_language = "en"  # Default for internal calls
+            self.logger.debug("Skipping language detection for internal call")
+        else:
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = await self.detect_language_with_llm(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+        
+        # Enhance messages with Azure Search if configured
+        enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
+        
+        # Get max_tokens based on response size
+        response_size = kwargs.get("response_size", "medium")
+        max_tokens = self._get_max_tokens_for_response_size("mistral", response_size)
+        
+        # Build Mistral API request (OpenAI-compatible format)
+        request_body = {
+            "model": self.model,
+            "messages": enhanced_messages,
+            "max_tokens": max_tokens,
+            "temperature": kwargs.get("temperature", app_settings.mistral.temperature),
+            "stream": stream
+        }
+        
+        # Add optional parameters
+        if kwargs.get("top_p"):
+            request_body["top_p"] = kwargs["top_p"]
+        if kwargs.get("stop"):
+            stop_sequences = kwargs["stop"] if isinstance(kwargs["stop"], list) else [kwargs["stop"]]
+            request_body["stop"] = stop_sequences
+        
+        self.logger.debug(f"Mistral API request: stream={stream}, messages={len(enhanced_messages)}")
+        
+        # Configure request headers
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        self.logger.debug(f"Request URL: {self.api_url}")
+        self.logger.debug(f"Request body keys: {list(request_body.keys())}")
+        masked_auth = f"Bearer {self.api_key[:8]}...{self.api_key[-4:]}"
+        self.logger.debug(f"Authorization header: {masked_auth}")
+        
+        if stream:
+            # Return streaming generator
+            generator = self._create_streaming_generator(request_body, headers)
+            return generator, None  # (response, apim_request_id)
+        else:
+            # Make non-streaming request
+            response = await self._make_non_streaming_request(request_body, headers)
+            return response, None  # (response, apim_request_id)
             
-            # Detect language from user's last message using LLM for accuracy
-            # Skip language detection if this is an internal call to avoid recursion
-            if kwargs.get("_skip_language_detection", False):
-                detected_language = "en"  # Default for internal calls
-                self.logger.debug("Skipping language detection for internal call")
-            else:
-                user_message = messages[-1]["content"] if messages else ""
-                detected_language = await self.detect_language_with_llm(user_message)
-                self.logger.debug(f"Detected language: {detected_language}")
-            
-            # Enhance messages with Azure Search if configured
-            enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
-            
-            # Get max_tokens based on response size
-            response_size = kwargs.get("response_size", "medium")
-            max_tokens = self._get_max_tokens_for_response_size("mistral", response_size)
-            
-            # Build Mistral API request (OpenAI-compatible format)
-            request_body = {
-                "model": self.model,
-                "messages": enhanced_messages,
-                "max_tokens": max_tokens,
-                "temperature": kwargs.get("temperature", app_settings.mistral.temperature),
-                "stream": stream
-            }
-            
-            # Add optional parameters
-            if kwargs.get("top_p"):
-                request_body["top_p"] = kwargs["top_p"]
-            if kwargs.get("stop"):
-                stop_sequences = kwargs["stop"] if isinstance(kwargs["stop"], list) else [kwargs["stop"]]
-                request_body["stop"] = stop_sequences
-            
-            self.logger.debug(f"Mistral API request: stream={stream}, messages={len(enhanced_messages)}")
-            
-            # Configure request headers
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-            
-            self.logger.debug(f"Request URL: {self.api_url}")
-            self.logger.debug(f"Request body keys: {list(request_body.keys())}")
-            masked_auth = f"Bearer {self.api_key[:8]}...{self.api_key[-4:]}"
-            self.logger.debug(f"Authorization header: {masked_auth}")
-            
-            if stream:
-                # Return streaming generator
-                generator = self._create_streaming_generator(request_body, headers)
-                return generator, None  # (response, apim_request_id)
-            else:
-                # Make non-streaming request
-                response = await self._make_non_streaming_request(request_body, headers)
-                return response, None  # (response, apim_request_id)
-                
-        except Exception as e:
-            self.logger.error(f"Mistral request failed: {e}")
-            raise LLMProviderRequestError(f"Mistral request failed: {e}")
+        # Error handling is now done by the @handle_provider_errors decorator
     
     def format_response(
         self, 
@@ -458,9 +456,12 @@ class MistralProvider(LLMProvider):
                 return response.json()
                 
         except httpx.HTTPError as e:
-            raise LLMProviderRequestError(f"Mistral API HTTP error: {e}")
+            # Re-raise as generic exception to be handled by decorator
+            raise Exception(f"Mistral HTTP error: {e}")
+            
         except json.JSONDecodeError as e:
-            raise LLMProviderRequestError(f"Failed to parse Mistral response: {e}")
+            # Re-raise as generic exception to be handled by decorator
+            raise Exception(f"Mistral JSON decode error: {e}")
     
     def _format_non_streaming_response(self, mistral_response: Dict[str, Any]) -> StandardResponseAdapter:
         """

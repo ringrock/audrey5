@@ -31,7 +31,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from backend.settings import app_settings
-from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
+from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError, handle_provider_errors
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
 from .language_detection import get_system_message_for_language
@@ -97,6 +97,7 @@ class OpenAIDirectProvider(LLMProvider):
             self.logger.error(f"Failed to initialize OpenAI Direct client: {e}")
             raise LLMProviderInitializationError(f"OpenAI Direct initialization failed: {e}")
     
+    @handle_provider_errors("OPENAI_DIRECT")
     async def send_request(
         self, 
         messages: List[Dict[str, Any]], 
@@ -119,81 +120,78 @@ class OpenAIDirectProvider(LLMProvider):
         """
         await self.init_client()
         
-        try:
-            # Detect language from user's last message using LLM for accuracy
-            # Skip language detection if this is an internal call to avoid recursion
-            if kwargs.get("_skip_language_detection", False):
-                detected_language = "en"  # Default for internal calls
-                self.logger.debug("Skipping language detection for internal call")
+        # Detect language from user's last message using LLM for accuracy
+        # Skip language detection if this is an internal call to avoid recursion
+        if kwargs.get("_skip_language_detection", False):
+            detected_language = "en"  # Default for internal calls
+            self.logger.debug("Skipping language detection for internal call")
+        else:
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = await self.detect_language_with_llm(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+        
+        # Convert OpenAI messages and enhance with Azure Search if configured
+        enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
+        
+        # Get max_tokens based on response size
+        response_size = kwargs.get("response_size", "medium")
+        max_tokens = self._get_max_tokens_for_response_size("openai_direct", response_size)
+        
+        # Build request parameters with defaults from settings
+        model_args = {
+            "messages": enhanced_messages,
+            "temperature": kwargs.get("temperature", getattr(app_settings.openai_direct, 'temperature', 0.7)),
+            "max_tokens": max_tokens,
+            "top_p": kwargs.get("top_p", getattr(app_settings.openai_direct, 'top_p', 1.0)),
+            "stop": kwargs.get("stop", getattr(app_settings.openai_direct, 'stop_sequence', None)),
+            "stream": stream,
+            "model": kwargs.get("model", getattr(app_settings.openai_direct, 'model', 'gpt-3.5-turbo')),
+            "user": kwargs.get("user"),
+        }
+        
+        # Add optional parameters if provided
+        if "tools" in kwargs:
+            model_args["tools"] = kwargs["tools"]
+        if "tool_choice" in kwargs:
+            model_args["tool_choice"] = kwargs["tool_choice"]
+        if "frequency_penalty" in kwargs:
+            model_args["frequency_penalty"] = kwargs["frequency_penalty"]
+        if "presence_penalty" in kwargs:
+            model_args["presence_penalty"] = kwargs["presence_penalty"]
+        
+        # Remove None values to avoid API errors
+        model_args = {k: v for k, v in model_args.items() if v is not None}
+        
+        self.logger.debug(f"Sending request to OpenAI Direct: stream={stream}, model={model_args['model']}")
+        
+        # Make the request
+        response = await self.client.chat.completions.create(**model_args)
+        
+        # Add citations to the response if we have search results
+        if hasattr(self, '_current_search_citations') and self._current_search_citations:
+            # For streaming responses, we need to inject citations
+            if stream:
+                response = self._inject_citations_in_stream(response)
             else:
-                user_message = messages[-1]["content"] if messages else ""
-                detected_language = await self.detect_language_with_llm(user_message)
-                self.logger.debug(f"Detected language: {detected_language}")
-            
-            # Convert OpenAI messages and enhance with Azure Search if configured
-            enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
-            
-            # Get max_tokens based on response size
-            response_size = kwargs.get("response_size", "medium")
-            max_tokens = self._get_max_tokens_for_response_size("openai_direct", response_size)
-            
-            # Build request parameters with defaults from settings
-            model_args = {
-                "messages": enhanced_messages,
-                "temperature": kwargs.get("temperature", getattr(app_settings.openai_direct, 'temperature', 0.7)),
-                "max_tokens": max_tokens,
-                "top_p": kwargs.get("top_p", getattr(app_settings.openai_direct, 'top_p', 1.0)),
-                "stop": kwargs.get("stop", getattr(app_settings.openai_direct, 'stop_sequence', None)),
-                "stream": stream,
-                "model": kwargs.get("model", getattr(app_settings.openai_direct, 'model', 'gpt-3.5-turbo')),
-                "user": kwargs.get("user"),
-            }
-            
-            # Add optional parameters if provided
-            if "tools" in kwargs:
-                model_args["tools"] = kwargs["tools"]
-            if "tool_choice" in kwargs:
-                model_args["tool_choice"] = kwargs["tool_choice"]
-            if "frequency_penalty" in kwargs:
-                model_args["frequency_penalty"] = kwargs["frequency_penalty"]
-            if "presence_penalty" in kwargs:
-                model_args["presence_penalty"] = kwargs["presence_penalty"]
-            
-            # Remove None values to avoid API errors
-            model_args = {k: v for k, v in model_args.items() if v is not None}
-            
-            self.logger.debug(f"Sending request to OpenAI Direct: stream={stream}, model={model_args['model']}")
-            
-            # Make the request
-            response = await self.client.chat.completions.create(**model_args)
-            
-            # Add citations to the response if we have search results
-            if hasattr(self, '_current_search_citations') and self._current_search_citations:
-                # For streaming responses, we need to inject citations
-                if stream:
-                    response = self._inject_citations_in_stream(response)
-                else:
-                    # For non-streaming, add citations to the message
-                    if hasattr(response, 'choices') and response.choices:
-                        choice = response.choices[0]
-                        if hasattr(choice, 'message'):
-                            # Add citations context to the message
-                            if not hasattr(choice.message, 'context'):
-                                choice.message.context = {}
-                            choice.message.context['citations'] = self._current_search_citations
-                            choice.message.context['intent'] = 'Azure Search results'
-            
-            # OpenAI Direct doesn't provide request IDs in the same way as Azure
-            # We'll generate a simple identifier for consistency
-            request_id = f"openai-direct-{response.id}" if hasattr(response, 'id') else None
-            
-            self.logger.debug(f"OpenAI Direct request completed, ID: {request_id}")
-            
-            return response, request_id
-            
-        except Exception as e:
-            self.logger.error(f"OpenAI Direct request failed: {e}")
-            raise LLMProviderRequestError(f"OpenAI Direct request failed: {e}")
+                # For non-streaming, add citations to the message
+                if hasattr(response, 'choices') and response.choices:
+                    choice = response.choices[0]
+                    if hasattr(choice, 'message'):
+                        # Add citations context to the message
+                        if not hasattr(choice.message, 'context'):
+                            choice.message.context = {}
+                        choice.message.context['citations'] = self._current_search_citations
+                        choice.message.context['intent'] = 'Azure Search results'
+        
+        # OpenAI Direct doesn't provide request IDs in the same way as Azure
+        # We'll generate a simple identifier for consistency
+        request_id = f"openai-direct-{response.id}" if hasattr(response, 'id') else None
+        
+        self.logger.debug(f"OpenAI Direct request completed, ID: {request_id}")
+        
+        return response, request_id
+        
+        # Error handling is now done by the @handle_provider_errors decorator
     
     def format_response(
         self, 

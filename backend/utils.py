@@ -22,13 +22,23 @@ class JSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-async def format_as_ndjson(r):
+async def format_as_ndjson(r, provider_name="LLM_SERVICE"):
     try:
         async for event in r:
             yield json.dumps(event, cls=JSONEncoder) + "\n"
     except Exception as error:
+        from backend.llm_providers.errors import LLMProviderErrorHandler
+        
         logging.exception("Exception while generating response stream: %s", error)
-        yield json.dumps({"error": str(error)})
+        
+        # Create user-friendly error response
+        error_response = LLMProviderErrorHandler.create_provider_error_response(
+            exception=error,
+            provider_name=provider_name,
+            language="fr"  # Default to French for AskMe
+        )
+        
+        yield json.dumps(error_response)
 
 
 def parse_multi_columns(columns: str) -> list:

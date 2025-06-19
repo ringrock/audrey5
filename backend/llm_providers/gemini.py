@@ -19,7 +19,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from backend.settings import app_settings
-from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError
+from .base import LLMProvider, LLMProviderInitializationError, LLMProviderRequestError, handle_provider_errors
 from .models import StandardResponse, StandardResponseAdapter, StandardChoice, StandardMessage, StandardUsage
 from .utils import AzureSearchService, build_search_context
 from .language_detection import get_system_message_for_language
@@ -82,6 +82,7 @@ class GeminiProvider(LLMProvider):
             
         self.initialized = True
     
+    @handle_provider_errors("GEMINI")
     async def send_request(
         self, 
         messages: List[Dict[str, Any]], 
@@ -106,42 +107,39 @@ class GeminiProvider(LLMProvider):
         """
         await self.init_client()
         
-        try:
-            # Reset citation state for new request
-            self._current_search_citations = None
+        # Reset citation state for new request
+        self._current_search_citations = None
+        
+        # Detect language from user's last message using LLM for accuracy
+        # Skip language detection if this is an internal call to avoid recursion
+        if kwargs.get("_skip_language_detection", False):
+            detected_language = "en"  # Default for internal calls
+            self.logger.debug("Skipping language detection for internal call")
+        else:
+            user_message = messages[-1]["content"] if messages else ""
+            detected_language = await self.detect_language_with_llm(user_message)
+            self.logger.debug(f"Detected language: {detected_language}")
+        
+        # Enhance messages with Azure Search if configured
+        enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
+        
+        # Convert messages from OpenAI to Gemini format
+        gemini_request = self._convert_messages_to_gemini_format(enhanced_messages, **kwargs)
+        
+        self.logger.debug(f"Gemini API request: stream={stream}, messages={len(enhanced_messages)}")
+        
+        if stream:
+            # Build streaming URL
+            stream_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={self.api_key}"
+            # Return streaming generator
+            generator = self._create_streaming_generator(gemini_request, stream_url)
+            return generator, None  # (response, apim_request_id)
+        else:
+            # Make non-streaming request
+            response = await self._make_non_streaming_request(gemini_request)
+            return response, None  # (response, apim_request_id)
             
-            # Detect language from user's last message using LLM for accuracy
-            # Skip language detection if this is an internal call to avoid recursion
-            if kwargs.get("_skip_language_detection", False):
-                detected_language = "en"  # Default for internal calls
-                self.logger.debug("Skipping language detection for internal call")
-            else:
-                user_message = messages[-1]["content"] if messages else ""
-                detected_language = await self.detect_language_with_llm(user_message)
-                self.logger.debug(f"Detected language: {detected_language}")
-            
-            # Enhance messages with Azure Search if configured
-            enhanced_messages = await self._enhance_with_search_context(messages, detected_language=detected_language, **kwargs)
-            
-            # Convert messages from OpenAI to Gemini format
-            gemini_request = self._convert_messages_to_gemini_format(enhanced_messages, **kwargs)
-            
-            self.logger.debug(f"Gemini API request: stream={stream}, messages={len(enhanced_messages)}")
-            
-            if stream:
-                # Build streaming URL
-                stream_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={self.api_key}"
-                # Return streaming generator
-                generator = self._create_streaming_generator(gemini_request, stream_url)
-                return generator, None  # (response, apim_request_id)
-            else:
-                # Make non-streaming request
-                response = await self._make_non_streaming_request(gemini_request)
-                return response, None  # (response, apim_request_id)
-                
-        except Exception as e:
-            self.logger.error(f"Gemini request failed: {e}")
-            raise LLMProviderRequestError(f"Gemini request failed: {e}")
+        # Error handling is now done by the @handle_provider_errors decorator
     
     def format_response(
         self, 
