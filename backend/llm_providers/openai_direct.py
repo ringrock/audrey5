@@ -322,7 +322,7 @@ class OpenAIDirectProvider(LLMProvider):
         
         if app_settings.datasource and enhanced_messages:
             # Extract user query for search
-            user_query = self._extract_user_query(enhanced_messages)
+            user_query = self._extract_user_query(enhanced_messages, detected_language)
             if user_query:
                 self.logger.debug(f"Performing Azure Search for query: '{user_query}'")
                 
@@ -361,7 +361,7 @@ class OpenAIDirectProvider(LLMProvider):
         
         return enhanced_messages
     
-    def _extract_user_query(self, messages: List[Dict[str, Any]]) -> Optional[str]:
+    def _extract_user_query(self, messages: List[Dict[str, Any]], detected_language: str = 'fr') -> Optional[str]:
         """Extract the user's query from messages for search, handling multimodal content"""
         # Get the last user message as the search query
         for msg in reversed(messages):
