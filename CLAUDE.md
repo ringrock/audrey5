@@ -120,6 +120,7 @@ This is an Azure OpenAI chat application with the following structure:
   - `history/`: CosmosDB integration for chat history
   - `security/`: Security utilities including MS Defender integration
   - `settings.py`: Configuration management via environment variables
+  - `llm_providers/`: Unified LLM provider abstraction with centralized error handling
 - **API Endpoints**:
   - `/conversation`: Streaming chat responses
   - `/conversation/custom`: Non-streaming chat
@@ -151,7 +152,7 @@ The application supports multiple data sources configured via environment variab
 
 5. **Frontend Build Output**: The frontend build creates files in `/static` which are served by the Python backend.
 
-6. **Error Handling**: The backend includes comprehensive error handling with proper status codes and error messages for various Azure OpenAI scenarios.
+6. **Error Handling**: The backend includes comprehensive unified error handling across all LLM providers with user-friendly localized messages (see LLM Provider Error Handling section).
 
 ## Code Quality Standards
 
@@ -162,3 +163,99 @@ The application supports multiple data sources configured via environment variab
 - Implement proper abstraction and modularity
 - Avoid magic numbers and strings
 - Make code reusable and configurable
+
+## LLM Provider Error Handling
+
+The application features a unified error handling system across all LLM providers that provides user-friendly, localized error messages.
+
+### Supported Providers
+All providers use the same centralized error handling system:
+- **AZURE_OPENAI**: Azure OpenAI service with native "On Your Data" integration
+- **CLAUDE**: Anthropic Claude AI
+- **OPENAI_DIRECT**: Direct OpenAI API access
+- **MISTRAL**: Mistral AI services
+- **GEMINI**: Google Gemini AI
+
+### Error Classification
+
+The system automatically classifies errors and provides appropriate French messages:
+
+#### HTTP 429 - Rate Limiting
+```
+"Trop de requêtes ont été envoyées au service {PROVIDER}. Veuillez patienter quelques instants avant de réessayer."
+```
+
+#### HTTP 401/403 - Authentication Issues
+```
+"Problème d'authentification avec {PROVIDER}. Veuillez contacter l'administrateur."
+```
+
+#### HTTP 400 - Bad Request
+```
+"Requête invalide envoyée à {PROVIDER}. Veuillez reformuler votre question."
+```
+
+#### HTTP 500+ - Server Errors
+```
+"Erreur temporaire du service {PROVIDER}. Veuillez réessayer dans quelques instants."
+```
+
+#### Network/Timeout Issues
+```
+"Problème de connexion avec {PROVIDER}. Vérifiez votre connexion internet et réessayez."
+```
+
+#### Quota/Billing Issues
+```
+"Quota ou limite de {PROVIDER} atteint. Veuillez contacter l'administrateur."
+```
+
+#### Content Filtering
+```
+"Votre demande a été filtrée par les politiques de contenu. Veuillez reformuler votre question."
+```
+
+### Implementation
+
+#### Core Components
+- **`backend/llm_providers/errors.py`**: Centralized error classification and message generation
+- **`backend/llm_providers/base.py`**: `@handle_provider_errors()` decorator for uniform error handling
+- **`backend/utils.py`**: Enhanced streaming error handling with provider context
+- **`frontend/src/pages/chat/Chat.tsx`**: Frontend error message parsing and display
+
+#### Usage Pattern
+All LLM providers use the same error handling decorator:
+
+```python
+@handle_provider_errors("PROVIDER_NAME")
+async def send_request(self, messages, stream=True, **kwargs):
+    # Provider-specific implementation
+    # Any exception is automatically caught and converted to user-friendly message
+```
+
+#### Error Flow
+1. **Exception occurs** in any LLM provider
+2. **Decorator intercepts** the exception
+3. **Error classifier** analyzes the exception type and content
+4. **User-friendly message** is generated in French
+5. **Frontend displays** the localized message instead of technical error
+6. **Technical details** are logged for debugging
+
+### Benefits
+- **Consistent UX**: Same error handling across all providers
+- **Localized Messages**: Clear French messages for end users
+- **Maintainable**: Single point of error message management
+- **Debugging**: Technical details preserved in logs
+- **Extensible**: Easy to add new error types and providers
+
+### Citation Configuration
+
+The application supports configurable citation content length:
+
+```env
+# Citation Configuration
+# Maximum length for citation content displayed in UI (default: 1000 characters)
+CITATION_CONTENT_MAX_LENGTH=2000
+```
+
+This setting controls how much text is displayed when users click on citations in the sidebar panel. The default value of 1000 characters can be adjusted based on user needs.
