@@ -354,7 +354,12 @@ class AzureOpenAIProvider(LLMProvider):
                 "data_sources": [datasource_config]
             }
             
-            self.logger.debug(f"Built Azure Search data_sources configuration with top_k={kwargs.get('documents_count', 'default')}")
+            # Enhanced logging to debug document count issues
+            requested_docs = kwargs.get('documents_count', 'default')
+            actual_top_n = datasource_config.get('parameters', {}).get('top_n_documents', 'not_found')
+            print(f"🔍 AZURE_OPENAI: Requested documents_count={requested_docs}, sending top_n_documents={actual_top_n} to Azure OpenAI")
+            self.logger.debug(f"Full datasource_config: {datasource_config}")
+            
             return extra_body
             
         except Exception as e:

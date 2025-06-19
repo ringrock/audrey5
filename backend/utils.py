@@ -106,6 +106,12 @@ def format_non_streaming_response(chatCompletion, history_metadata, apim_request
         message = chatCompletion.choices[0].message
         if message:
             if hasattr(message, "context"):
+                # Log citation count for debugging document count issues
+                citation_count = 0
+                if hasattr(message.context, 'citations') and message.context.citations:
+                    citation_count = len(message.context.citations)
+                print(f"🔍 AZURE_OPENAI_RESPONSE: Received {citation_count} citations from Azure OpenAI")
+                
                 response_obj["choices"][0]["messages"].append(
                     {
                         "role": "tool",
@@ -138,6 +144,12 @@ def format_stream_response(chatCompletionChunk, history_metadata, apim_request_i
         delta = chatCompletionChunk.choices[0].delta
         if delta:
             if hasattr(delta, "context") and delta.context:
+                # Log citation count for debugging document count issues (streaming)
+                citation_count = 0
+                if hasattr(delta.context, 'citations') and delta.context.citations:
+                    citation_count = len(delta.context.citations)
+                print(f"🔍 AZURE_OPENAI_STREAMING: Received {citation_count} citations from Azure OpenAI")
+                
                 messageObj = {"role": "tool", "content": json.dumps(delta.context)}
                 response_obj["choices"][0]["messages"].append(messageObj)
                 return response_obj

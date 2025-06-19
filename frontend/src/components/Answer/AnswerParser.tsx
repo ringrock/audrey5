@@ -26,22 +26,52 @@ export function parseAnswer(answer: AskResponse): ParsedAnswer {
   if (typeof answer.answer !== "string") return null
   let answerText = answer.answer
 
-  const citationLinks = answerText.match(/\[(doc\d\d?\d?)]/g)
+  // Match both single citations [doc1] and multiple citations [doc1, doc2, doc3]
+  // Flexible regex to capture any citation pattern containing doc followed by numbers
+  const citationLinks = answerText.match(/\[[^\]]*doc\d+[^\]]*\]/g)
 
   const lengthDocN = '[doc'.length
 
   let filteredCitations = [] as Citation[]
   let citationReindex = 0
   citationLinks?.forEach(link => {
-    // Replacing the links/citations with number
-    const citationIndex = link.slice(lengthDocN, link.length - 1)
-    const citation = cloneDeep(answer.citations[Number(citationIndex) - 1]) as Citation
-    if (!filteredCitations.find(c => c.id === citationIndex) && citation) {
-      answerText = answerText.replaceAll(link, ` ^${++citationReindex}^ `)
-      citation.id = citationIndex // original doc index to de-dupe
-      citation.reindex_id = citationReindex.toString() // reindex from 1 for display
-      filteredCitations.push(citation)
+    // Extract all doc numbers from the link using regex
+    // This handles both [doc1] and [doc1, doc2, doc3] formats
+    const docMatches = link.match(/doc(\d+)/g)
+    
+    if (!docMatches) {
+      return
     }
+    
+    let replacementText = ''
+    docMatches.forEach(docMatch => {
+      // Extract just the number from "doc1", "doc2", etc.
+      const docNumber = docMatch.replace('doc', '')
+      const citationArrayIndex = Number(docNumber) - 1
+      
+      // Check if citation exists in the available citations array
+      if (citationArrayIndex >= 0 && citationArrayIndex < answer.citations.length) {
+        const citation = cloneDeep(answer.citations[citationArrayIndex]) as Citation
+        
+        if (!filteredCitations.find(c => c.id === docNumber) && citation) {
+          if (replacementText) replacementText += ' '
+          replacementText += ` ^${++citationReindex}^ `
+          citation.id = docNumber // original doc index to de-dupe
+          citation.reindex_id = citationReindex.toString() // reindex from 1 for display
+          filteredCitations.push(citation)
+        } else if (citation) {
+          // Citation already exists, find its reindex
+          const existingCitation = filteredCitations.find(c => c.id === docNumber)
+          if (existingCitation) {
+            if (replacementText) replacementText += ' '
+            replacementText += ` ^${existingCitation.reindex_id}^ `
+          }
+        }
+      }
+    })
+    
+    // Replace the original citation link with numbered references
+    answerText = answerText.replaceAll(link, replacementText)
   })
 
   filteredCitations = enumerateCitations(filteredCitations)
