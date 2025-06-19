@@ -15,9 +15,10 @@ interface Props {
   placeholder?: string
   clearOnSend?: boolean
   conversationId?: string
+  onVoiceRecognitionReady?: (pause: () => void, resume: () => void) => void
 }
 
-export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conversationId }: Props) => {
+export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conversationId, onVoiceRecognitionReady }: Props) => {
   const [base64Image, setBase64Image] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState<boolean>(false)
   const [userTypedQuestion, setUserTypedQuestion] = useState<string>('')
@@ -60,6 +61,16 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       voiceRecognition.setQuestion(question)
     }
   }, [question])
+
+  // Expose voice recognition functions to parent
+  useEffect(() => {
+    if (onVoiceRecognitionReady) {
+      onVoiceRecognitionReady(
+        voiceRecognition.pauseVoiceRecognition,
+        voiceRecognition.resumeVoiceRecognition
+      )
+    }
+  }, [onVoiceRecognitionReady, voiceRecognition.pauseVoiceRecognition, voiceRecognition.resumeVoiceRecognition])
   
   // Load history from localStorage on component mount
   useEffect(() => {

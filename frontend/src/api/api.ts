@@ -482,3 +482,39 @@ export const uploadDocument = async (file: File): Promise<DocumentUploadResponse
 
   return await response.json()
 }
+
+export async function azureSpeechSynthesize(text: string, language: string = 'FR'): Promise<{
+  success: boolean
+  audio_data?: string
+  audio_segments?: string[]
+  content_type?: string
+  voice_used?: string
+  segment_count?: number
+  error?: string
+} | null> {
+  try {
+    const response = await fetch('/speech/synthesize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text, language })
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      return {
+        success: false,
+        error: errorData.error || `Speech synthesis failed with status ${response.status}`
+      }
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error('Azure Speech synthesis error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}

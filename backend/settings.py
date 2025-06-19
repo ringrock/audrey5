@@ -918,6 +918,13 @@ class _BaseSettings(BaseSettings):
     wake_word_enabled: bool = True    # Enable wake word detection
     wake_word_phrases: Optional[List[str]] = ["asmi", "askme", "askmi", "asqmi"]  # Wake word phrases
     
+    # Azure Speech Services Configuration
+    azure_speech_enabled: bool = False  # Enable Azure Speech Services for TTS
+    azure_speech_key: Optional[str] = None  # Azure Speech Services API key
+    azure_speech_region: Optional[str] = "westeurope"  # Azure Speech Services region
+    azure_speech_voice_fr: str = "fr-FR-DeniseNeural"  # French voice
+    azure_speech_voice_en: str = "en-US-JennyNeural"   # English voice
+    
     @field_validator('wake_word_phrases', mode='before')
     @classmethod
     def split_wake_word_phrases(cls, comma_separated_string: str) -> List[str]:

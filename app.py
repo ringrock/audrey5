@@ -49,6 +49,8 @@ from backend.utils import (
 )
 from backend.document_processor import DocumentProcessor
 from backend.llm_providers import LLMProviderFactory
+from backend.speech_services import synthesize_speech_azure, clean_text_for_speech
+from backend.pronunciation_dict import get_pronunciation_dict, add_pronunciation, remove_pronunciation
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
@@ -131,6 +133,9 @@ frontend_settings = {
     "voice_input_enabled": app_settings.base_settings.voice_input_enabled,
     "wake_word_enabled": app_settings.base_settings.wake_word_enabled,
     "wake_word_phrases": app_settings.base_settings.wake_word_phrases,
+    "azure_speech_enabled": app_settings.base_settings.azure_speech_enabled,
+    "azure_speech_voice_fr": app_settings.base_settings.azure_speech_voice_fr,
+    "azure_speech_voice_en": app_settings.base_settings.azure_speech_voice_en,
 }
 
 
@@ -1479,5 +1484,94 @@ def decrypt_string(encrypted_base64):
     
     # Convertir les données en chaîne de caractères
     return plain_text.decode('utf-8')
+
+
+@bp.route("/speech/synthesize", methods=["POST"])
+async def azure_speech_synthesize():
+    """Endpoint pour synthèse vocale Azure Speech Services"""
+    try:
+        request_json = await request.get_json()
+        text = request_json.get("text", "")
+        language = request_json.get("language", "FR")
+        
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+        
+        # Utiliser le service de synthèse vocale
+        result = synthesize_speech_azure(text, language)
+        
+        if result["success"]:
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        logging.error(f"Error in speech endpoint: {str(e)}")
+        return jsonify({"error": f"Speech synthesis failed: {str(e)}"}), 500
+
+
+@bp.route("/speech/pronunciation", methods=["GET"])
+async def get_pronunciations():
+    """Récupère le dictionnaire de pronunciations"""
+    try:
+        return jsonify({"pronunciations": get_pronunciation_dict()})
+    except Exception as e:
+        logging.error(f"Error getting pronunciations: {str(e)}")
+        return jsonify({"error": "Failed to get pronunciations"}), 500
+
+
+@bp.route("/speech/pronunciation", methods=["POST"])
+async def add_pronunciation_rule():
+    """Ajoute une règle de pronunciation"""
+    try:
+        request_json = await request.get_json()
+        original = request_json.get("original", "")
+        phonetic = request_json.get("phonetic", "")
+        
+        if not original or not phonetic:
+            return jsonify({"error": "Both 'original' and 'phonetic' are required"}), 400
+        
+        add_pronunciation(original, phonetic)
+        return jsonify({"success": True, "message": f"Pronunciation added: {original} -> {phonetic}"})
+        
+    except Exception as e:
+        logging.error(f"Error adding pronunciation: {str(e)}")
+        return jsonify({"error": "Failed to add pronunciation"}), 500
+
+
+@bp.route("/speech/pronunciation/<original>", methods=["DELETE"])
+async def remove_pronunciation_rule(original: str):
+    """Supprime une règle de pronunciation"""
+    try:
+        success = remove_pronunciation(original)
+        if success:
+            return jsonify({"success": True, "message": f"Pronunciation removed: {original}"})
+        else:
+            return jsonify({"error": f"Pronunciation not found: {original}"}), 404
+            
+    except Exception as e:
+        logging.error(f"Error removing pronunciation: {str(e)}")
+        return jsonify({"error": "Failed to remove pronunciation"}), 500
+
+
+@bp.route("/speech/clean", methods=["POST"])
+async def clean_text_for_browser():
+    """Nettoie le texte pour la synthèse vocale du navigateur"""
+    try:
+        request_json = await request.get_json()
+        text = request_json.get("text", "")
+        
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+        
+        # Nettoyer le texte pour le navigateur
+        cleaned_text = clean_text_for_speech(text, for_browser=True)
+        
+        return jsonify({"success": True, "cleaned_text": cleaned_text})
+        
+    except Exception as e:
+        logging.error(f"Error cleaning text: {str(e)}")
+        return jsonify({"error": f"Text cleaning failed: {str(e)}"}), 500
+
 
 app = create_app()

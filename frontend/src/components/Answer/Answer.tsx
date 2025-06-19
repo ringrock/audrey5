@@ -1,4 +1,4 @@
-import { FormEvent, useContext, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useContext, useEffect, useMemo, useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { nord } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -8,7 +8,7 @@ import { ThumbDislike20Filled, ThumbLike20Filled, Copy20Regular, Speaker120Regul
 import DOMPurify from 'dompurify'
 import remarkGfm from 'remark-gfm'
 import supersub from 'remark-supersub'
-import { AskResponse, Citation, Feedback, historyMessageFeedback } from '../../api'
+import { AskResponse, Citation, Feedback, historyMessageFeedback, azureSpeechSynthesize } from '../../api'
 import { XSSAllowTags, XSSAllowAttributes } from '../../constants/sanatizeAllowables'
 import { AppStateContext } from '../../state/AppProvider'
 
@@ -27,9 +27,13 @@ interface Props {
   onCitationClicked: (citedDocument: Citation) => void
   onExectResultClicked: (answerId: string) => void
   language: string;
+  pauseVoiceRecognition?: () => void
+  resumeVoiceRecognition?: () => void
+  isStreaming?: boolean
 }
 
-export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language}: Props) => {
+export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language, pauseVoiceRecognition, resumeVoiceRecognition, isStreaming}: Props) => {
+  const appStateContext = useContext(AppStateContext)
   const initializeAnswerFeedback = (answer: AskResponse) => {
     if (answer.message_id == undefined) return undefined
     if (answer.feedback == undefined) return undefined
@@ -52,7 +56,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   const [copySuccess, setCopySuccess] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speechSynthesis, setSpeechSynthesis] = useState<SpeechSynthesisUtterance | null>(null)
-  const appStateContext = useContext(AppStateContext)
+  const autoPlayTriggeredRef = useRef<string | null>(null)
   const FEEDBACK_ENABLED =
     appStateContext?.state.frontendSettings?.feedback_enabled && appStateContext?.state.isCosmosDBAvailable?.cosmosDB
   const SANITIZE_ANSWER = appStateContext?.state.frontendSettings?.sanitize_answer
@@ -68,17 +72,31 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     setChevronIsExpanded(isRefAccordionOpen)
   }, [isRefAccordionOpen])
 
-  // Auto-lecture audio si activée - DÉSACTIVÉ TEMPORAIREMENT
-  // useEffect(() => {
-  //   if (appStateContext?.state.isAutoAudioEnabled && 
-  //       parsedAnswer?.markdownFormatText && 
-  //       answer.message_id !== undefined) {
-  //     // Petite délai pour s'assurer que le composant est rendu
-  //     setTimeout(() => {
-  //       playAudio()
-  //     }, 500)
-  //   }
-  // }, [parsedAnswer?.markdownFormatText, appStateContext?.state.isAutoAudioEnabled, answer.message_id])
+  // Auto-lecture audio si activée - déclenche la fonction de lecture manuelle
+  useEffect(() => {
+    // Attendre que le message soit complètement généré
+    if (appStateContext?.state.isAutoAudioEnabled && 
+        parsedAnswer?.markdownFormatText && 
+        answer.message_id !== undefined &&
+        !isStreaming &&
+        autoPlayTriggeredRef.current !== answer.message_id) { // Éviter les boucles infinies
+      
+      // Marquer ce message comme déclenché
+      autoPlayTriggeredRef.current = answer.message_id
+      
+      // Délai pour s'assurer que le composant est complètement rendu
+      const timeoutId = setTimeout(() => {
+        // Vérifier que l'auto-lecture est toujours activée avant de lancer
+        if (appStateContext?.state.isAutoAudioEnabled && !isPlaying) {
+          console.log('Auto-lecture déclenchée pour le message:', answer.message_id)
+          playAudio()
+        }
+      }, 800) // Délai légèrement plus long pour éviter les conflits
+      
+      // Nettoyer le timeout si le composant se démonte ou si les dépendances changent
+      return () => clearTimeout(timeoutId)
+    }
+  }, [parsedAnswer?.markdownFormatText, appStateContext?.state.isAutoAudioEnabled, answer.message_id, isStreaming, isPlaying])
 
   useEffect(() => {
     if (answer.message_id == undefined) return
@@ -212,53 +230,206 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     }
   }
 
-  const playAudio = () => {
+  const playAudio = async () => {
     if (!parsedAnswer?.markdownFormatText) return
     
-    // Stopper la lecture en cours si elle existe
-    if (speechSynthesis && window.speechSynthesis.speaking) {
+    if (isPlaying) {
+      stopAudio()
+      return
+    }
+    
+    // Suspendre l'écoute vocale pour éviter que le système s'entende parler
+    pauseVoiceRecognition?.()
+    
+    // Stopper toute lecture en cours
+    if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel()
     }
     
+    // Envoyer le texte markdown brut au backend - tout le nettoyage sera fait côté backend
+    const textToSynthesize = parsedAnswer.markdownFormatText
+    
+    if (!textToSynthesize) return
+    
+    // Vérifier si Azure Speech Services est activé
+    const azureSpeechEnabled = appStateContext?.state.frontendSettings?.azure_speech_enabled
+    
+    if (azureSpeechEnabled) {
+      await playAudioWithAzure(textToSynthesize)
+    } else {
+      await playAudioWithBrowser(textToSynthesize)
+    }
+  }
+
+  const playAudioWithAzure = async (text: string) => {
     try {
-      // Nettoyer le texte des balises HTML et markdown
-      const cleanText = parsedAnswer.markdownFormatText
-        .replace(/<[^>]*>/g, '') // Supprimer les balises HTML
-        .replace(/\*\*([^*]+)\*\*/g, '$1') // Supprimer le markdown gras
-        .replace(/\*([^*]+)\*/g, '$1') // Supprimer le markdown italique
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Supprimer les liens markdown
-        .replace(/#{1,6}\s*/g, '') // Supprimer les titres markdown
-        .replace(/```[\s\S]*?```/g, 'code block') // Remplacer les blocs de code
-        .replace(/`([^`]+)`/g, '$1') // Supprimer le code inline
-        .trim()
+      setIsPlaying(true)
       
-      if (!cleanText) return
+      const result = await azureSpeechSynthesize(text, language)
       
-      const utterance = new SpeechSynthesisUtterance(cleanText)
-      utterance.lang = language === 'FR' ? 'fr-FR' : 'en-US'
-      utterance.rate = 0.9
-      utterance.pitch = 1
-      
-      utterance.onstart = () => {
-        setIsPlaying(true)
+      if (!result?.success) {
+        console.error('Azure Speech error:', result?.error)
+        // Reprendre l'écoute en cas d'erreur avant de basculer vers le navigateur
+        resumeVoiceRecognition?.()
+        await playAudioWithBrowser(text)
+        return
       }
       
+      // Vérifier s'il s'agit de segments multiples ou d'un seul audio
+      if (result.audio_segments && result.audio_segments.length > 1 && result.content_type) {
+        // Lecture séquentielle des segments
+        await playAudioSegments(result.audio_segments, result.content_type)
+      } else {
+        // Lecture simple d'un seul audio
+        const audioData = result.audio_data 
+          ? `data:${result.content_type || 'audio/mpeg'};base64,${result.audio_data}`
+          : result.audio_segments && result.audio_segments[0]
+            ? `data:${result.content_type || 'audio/mpeg'};base64,${result.audio_segments[0]}`
+            : null
+        
+        if (!audioData) {
+          playAudioWithBrowser(text)
+          return
+        }
+        
+        const audio = new Audio(audioData)
+        
+        audio.onended = () => {
+          setIsPlaying(false)
+          setSpeechSynthesis(null)
+          // Reprendre l'écoute vocale après la lecture
+          resumeVoiceRecognition?.()
+        }
+        
+        audio.onerror = async () => {
+          setIsPlaying(false)
+          setSpeechSynthesis(null)
+          // Reprendre l'écoute vocale en cas d'erreur
+          resumeVoiceRecognition?.()
+          await playAudioWithBrowser(text)
+        }
+        
+        await audio.play()
+      }
+      
+    } catch (err) {
+      console.error('Azure Speech synthesis error:', err)
+      setIsPlaying(false)
+      setSpeechSynthesis(null)
+      // Reprendre l'écoute vocale en cas d'erreur
+      resumeVoiceRecognition?.()
+      await playAudioWithBrowser(text)
+    }
+  }
+  
+  const playAudioSegments = async (segments: string[], contentType: string) => {
+    try {
+      console.log(`🔊 Starting playback of ${segments.length} segments`)
+      
+      for (let i = 0; i < segments.length; i++) {
+        console.log(`🔊 Playing segment ${i + 1}/${segments.length}`)
+        
+        const audioData = `data:${contentType};base64,${segments[i]}`
+        const audio = new Audio(audioData)
+        
+        // Attendre que ce segment soit fini avant de passer au suivant
+        await new Promise<void>((resolve, reject) => {
+          audio.onended = () => {
+            console.log(`✅ Segment ${i + 1} completed`)
+            resolve()
+          }
+          audio.onerror = (event) => {
+            console.error(`❌ Error playing segment ${i + 1}:`, event)
+            reject(new Error(`Error playing segment ${i}`))
+          }
+          
+          audio.play().then(() => {
+            console.log(`▶️ Segment ${i + 1} started`)
+          }).catch(reject)
+        })
+        
+        // Pause minimale entre les segments pour fluidité
+        if (i < segments.length - 1) {
+          console.log(`⏸️ Pause before segment ${i + 2}`)
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+      }
+      
+      console.log(`🎉 All ${segments.length} segments completed successfully`)
+      setIsPlaying(false)
+      setSpeechSynthesis(null)
+      // Reprendre l'écoute vocale après tous les segments
+      resumeVoiceRecognition?.()
+      
+    } catch (err) {
+      console.error('Error playing audio segments:', err)
+      console.log(`❌ Playback stopped at segment during error`)
+      setIsPlaying(false)
+      setSpeechSynthesis(null)
+      // Reprendre l'écoute vocale en cas d'erreur
+      resumeVoiceRecognition?.()
+    }
+  }
+
+  const playAudioWithBrowser = async (text: string) => {
+    try {
+      // Nettoyer le texte côté backend même pour le navigateur
+      const response = await fetch('/speech/clean', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text })
+      })
+      
+      let cleanedText = text
+      if (response.ok) {
+        const result = await response.json()
+        if (result.success && result.cleaned_text) {
+          cleanedText = result.cleaned_text
+        }
+      }
+      
+      const utterance = new SpeechSynthesisUtterance(cleanedText)
+      
+      // Configuration
+      utterance.lang = language === 'FR' ? 'fr-FR' : 'en-US'
+      utterance.rate = 1.15
+      utterance.pitch = 0.7
+      utterance.volume = 1
+      
+      // Sélection de voix simple
+      const voices = window.speechSynthesis.getVoices()
+      const targetLang = language === 'FR' ? 'fr' : 'en'
+      const bestVoice = voices.find(voice => voice.lang.includes(targetLang))
+      
+      if (bestVoice) {
+        utterance.voice = bestVoice
+      }
+      
+      utterance.onstart = () => setIsPlaying(true)
       utterance.onend = () => {
         setIsPlaying(false)
         setSpeechSynthesis(null)
+        // Reprendre l'écoute vocale après la lecture navigateur
+        resumeVoiceRecognition?.()
       }
-      
       utterance.onerror = () => {
         setIsPlaying(false)
         setSpeechSynthesis(null)
-        console.error('Erreur lors de la lecture audio')
+        // Reprendre l'écoute vocale en cas d'erreur
+        resumeVoiceRecognition?.()
       }
       
       setSpeechSynthesis(utterance)
       window.speechSynthesis.speak(utterance)
       setIsPlaying(true)
     } catch (err) {
-      console.error('Erreur lors de la lecture audio:', err)
+      console.error('Browser speech error:', err)
+      setIsPlaying(false)
+      setSpeechSynthesis(null)
+      // Reprendre l'écoute vocale en cas d'erreur
+      resumeVoiceRecognition?.()
     }
   }
 
@@ -268,6 +439,8 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     }
     setIsPlaying(false)
     setSpeechSynthesis(null)
+    // Reprendre l'écoute vocale si arrêt manuel
+    resumeVoiceRecognition?.()
   }
 
   const toggleAudio = () => {
@@ -548,8 +721,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
             <Stack.Item className={styles.answerHeader}>
               {(FEEDBACK_ENABLED && answer.message_id !== undefined) || (!FEEDBACK_ENABLED && answer.message_id !== undefined) ? (
                 <Stack horizontal horizontalAlign="space-between">
-                  {/* LECTURE AUDIO DÉSACTIVÉE TEMPORAIREMENT */}
-                  {/* {isPlaying ? (
+                  {isPlaying ? (
                     <SpeakerOff20Regular
                       aria-hidden="false"
                       aria-label={localizedStrings.stopAudio}
@@ -563,7 +735,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
                       onClick={playAudio}
                       style={{ color: 'slategray', cursor: 'pointer' }}
                     />
-                  )} */}
+                  )}
                   <Copy20Regular
                     aria-hidden="false"
                     aria-label={copySuccess ? localizedStrings.copied : localizedStrings.copyResponse}
@@ -641,8 +813,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
             <span className={styles.answerDisclaimer}>{localizedStrings.aiDisclaimer}</span>
-            {/* TOGGLE AUTO AUDIO DÉSACTIVÉ TEMPORAIREMENT */}
-            {/* <span 
+            <span 
               className={styles.audioToggle}
               onClick={toggleAutoAudio}
               style={{ 
@@ -654,7 +825,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
               title={appStateContext?.state.isAutoAudioEnabled ? localizedStrings.disableAutoAudio : localizedStrings.enableAutoAudio}
             >
               🔊 {appStateContext?.state.isAutoAudioEnabled ? 'ON' : 'OFF'}
-            </span> */}
+            </span>
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>

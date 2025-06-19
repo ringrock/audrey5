@@ -248,6 +248,121 @@ async def send_request(self, messages, stream=True, **kwargs):
 - **Debugging**: Technical details preserved in logs
 - **Extensible**: Easy to add new error types and providers
 
+## Voice Features
+
+The application includes comprehensive voice capabilities for both input and output, providing a hands-free user experience.
+
+### Voice Input (Speech Recognition)
+
+#### Configuration
+```env
+# Voice input settings
+VOICE_INPUT_ENABLED=true
+WAKE_WORD_ENABLED=true
+WAKE_WORD_PHRASES=["Patrick", "AskMe", "AskMi", "AsMi"]
+```
+
+#### Recognition Modes
+
+**Manual Mode (Single Click)**
+- Click once on microphone (🎤) to start voice dictation
+- Automatically stops when speech is detected as complete
+- Question is sent immediately after recognition
+
+**Wake Word Mode (Double Click)**
+- Double-click microphone to activate continuous listening
+- System listens for wake words: "Patrick", "AskMe", "AskMi", "AsMi"
+- Say wake word followed by question: "Patrick, résume-moi la charte informatique"
+- Remains active between conversations for hands-free operation
+- Double-click again or single-click during listening to deactivate
+
+#### Smart Integration
+- Automatically pauses during text-to-speech playback to prevent audio feedback
+- Seamlessly resumes wake word mode after audio playback (if it was active before)
+- Compatible with both Azure Speech and browser-based speech synthesis
+
+### Text-to-Speech (Voice Output)
+
+#### Configuration
+```env
+# Azure Speech Services settings
+AZURE_SPEECH_ENABLED=true
+AZURE_SPEECH_KEY=your_azure_speech_key
+AZURE_SPEECH_REGION=your_azure_region
+AZURE_SPEECH_VOICE_FR=fr-FR-DeniseNeural
+AZURE_SPEECH_VOICE_EN=en-US-AriaNeural
+```
+
+#### Playback Modes
+
+**Manual Playback**
+- Click speaker icon (🔊) next to any response to trigger text-to-speech
+- Click again to stop ongoing playback
+- Works with both completed and partial responses
+
+**Automatic Playback**
+- Toggle with "🔊 ON/OFF" button at bottom of each response
+- Automatically reads new responses as they complete generation
+- Waits for streaming to finish before starting playback
+- Can be interrupted by user at any time
+
+#### Technology Stack
+
+**Azure Speech Services (Primary)**
+- High-quality neural voices with natural intonation
+- Intelligent text processing with SSML enhancement
+- Automatic segmentation for long texts (>1000 characters)
+- Sequential playback of segments with minimal pauses (50ms)
+
+**Browser Speech Synthesis (Fallback)**
+- Used when Azure Speech is unavailable or disabled
+- Automatic fallback on Azure Speech errors
+- Cross-browser compatibility
+
+#### Intelligent Text Processing
+
+**Backend Text Cleaning (`backend/speech_services.py`)**
+- Centralized text processing for consistent quality
+- Markdown and HTML structure preservation during analysis
+- Intelligent title, list, and section detection
+- Comprehensive emoji and special character removal
+- Pronunciation corrections via custom dictionary
+
+**Enhanced Speech Features**
+- Hierarchical pause system:
+  - 800ms for main titles (# ##)
+  - 600ms for medium titles (### ####)
+  - 400ms for normal sentence transitions
+  - 300ms for list item transitions
+- SSML markup for natural speech patterns
+- Emphasis on important titles and sections
+- Optimized prosody (rate: 1.08, pitch: -6%)
+
+#### Voice Recognition Integration
+
+**Automatic Coordination**
+- Voice recognition pauses during text-to-speech to prevent interference
+- Smart state management preserves wake word mode across audio sessions
+- Timing optimization to avoid recognition conflicts
+
+**Architecture**
+- Single `useVoiceRecognition` hook to prevent state conflicts
+- Props-based function passing to audio components
+- Centralized state management with `useRef` for persistent values
+
+### File Organization
+
+**Frontend Voice Components**
+- `frontend/src/hooks/useVoiceRecognition.ts`: Core voice recognition logic
+- `frontend/src/components/QuestionInput/QuestionInput.tsx`: Voice input interface
+- `frontend/src/components/Answer/Answer.tsx`: Text-to-speech integration
+- `frontend/src/pages/chat/Chat.tsx`: Voice coordination between components
+
+**Backend Voice Services**
+- `backend/speech_services.py`: Azure Speech Services integration and text processing
+- `backend/pronunciation_dict.py`: Custom pronunciation corrections
+- `app.py`: Speech API endpoints (`/speech/synthesize`, `/speech/clean`)
+
 ### Citation Configuration
 
 The application supports configurable citation content length:

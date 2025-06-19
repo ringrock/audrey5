@@ -21,6 +21,8 @@ interface VoiceRecognitionActions {
   toggleWakeWord: () => void
   setQuestion: (question: string) => void
   resetVoiceInput: () => void
+  pauseVoiceRecognition: () => void
+  resumeVoiceRecognition: () => void
 }
 
 export const useVoiceRecognition = (
@@ -32,6 +34,9 @@ export const useVoiceRecognition = (
   const [question, setQuestion] = useState<string>('')
   const [voiceInputComplete, setVoiceInputComplete] = useState<boolean>(false)
   const [wakeWordMode, setWakeWordMode] = useState<boolean>(false)
+  
+  // État pour mémoriser si l'écoute était active avant la pause audio
+  const wasWakeWordActiveBeforePause = useRef<boolean>(false)
 
   const recognitionRef = useRef<any>(null)
   const wakeWordRecognitionRef = useRef<any>(null)
@@ -102,7 +107,7 @@ export const useVoiceRecognition = (
         wakeWordRecognition.onresult = (event: any) => {
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript.toLowerCase().trim()
-            console.log('Wake word detection:', transcript, '(final:', event.results[i].isFinal, ')')
+           // console.log('Wake word detection:', transcript, '(final:', event.results[i].isFinal, ')')
             
             const detected = wakeWordPhrases.some((phrase: string) => 
               transcript.includes(phrase.toLowerCase())
@@ -186,7 +191,7 @@ export const useVoiceRecognition = (
                 isWakeWordListening, 
                 isListening 
               })
-              if (wakeWordRecognitionRef.current && canUseWakeWord && voiceInputEnabled && wakeWordMode && !isWakeWordListening && !isListening) {
+              if (wakeWordRecognitionRef.current && canUseWakeWord && voiceInputEnabled && !isWakeWordListening && !isListening) {
                 try {
                   setIsWakeWordListening(true)
                   wakeWordRecognitionRef.current.start()
@@ -406,6 +411,94 @@ export const useVoiceRecognition = (
     restartWakeWordAfterSend()
   }, [restartWakeWordAfterSend])
 
+  // Pause l'écoute vocale (pendant la lecture audio par exemple)
+  const pauseVoiceRecognition = useCallback(() => {
+    console.log('Pausing voice recognition for audio playback')
+    
+    // Mémoriser l'état actuel du wake word avant de l'arrêter
+    wasWakeWordActiveBeforePause.current = isWakeWordListening
+    console.log('Wake word was active before pause:', wasWakeWordActiveBeforePause.current)
+    
+    // Arrêter la reconnaissance manuelle si en cours
+    if (recognitionRef.current && isListening) {
+      try {
+        recognitionRef.current.stop()
+      } catch (error) {
+        console.error('Error stopping manual recognition:', error)
+      }
+    }
+    
+    // Arrêter le wake word si en cours
+    if (wakeWordRecognitionRef.current && isWakeWordListening) {
+      try {
+        wakeWordRecognitionRef.current.stop()
+      } catch (error) {
+        console.error('Error stopping wake word recognition:', error)
+      }
+    }
+  }, [isListening, isWakeWordListening])
+
+  // Reprendre l'écoute vocale après la lecture audio
+  const resumeVoiceRecognition = useCallback(() => {
+    console.log('Resuming voice recognition after audio playback')
+    
+    // Utiliser un délai pour permettre aux états de se synchroniser
+    setTimeout(() => {
+      console.log('Current state before resume check:', {
+        wasWakeWordActiveBeforePause: wasWakeWordActiveBeforePause.current,
+        wakeWordMode,
+        canUseWakeWord,
+        voiceInputEnabled,
+        isListening,
+        isWakeWordListening,
+        hasWakeWordRef: !!wakeWordRecognitionRef.current
+      })
+      
+      // Redémarrer le wake word SEULEMENT s'il était actif avant la pause ET que le mode est toujours activé
+      // Ignorer l'état isWakeWordListening car il peut être incohérent après la pause
+      if (wasWakeWordActiveBeforePause.current && wakeWordMode && canUseWakeWord && voiceInputEnabled && !isListening) {
+        console.log('Conditions met, restarting wake word recognition...')
+        if (wakeWordRecognitionRef.current) {
+          try {
+            // Forcer l'arrêt d'abord pour s'assurer qu'on repart sur une base propre
+            if (isWakeWordListening) {
+              console.log('Stopping any existing wake word recognition before restart')
+              wakeWordRecognitionRef.current.stop()
+              setIsWakeWordListening(false)
+            }
+            
+            // Petit délai pour s'assurer que l'arrêt est effectif
+            setTimeout(() => {
+              try {
+                console.log('Starting fresh wake word recognition')
+                setIsWakeWordListening(true)
+                wakeWordRecognitionRef.current.start()
+                console.log('Wake word recognition resumed (was active before)')
+              } catch (error) {
+                console.error('Error starting fresh wake word recognition:', error)
+                setIsWakeWordListening(false)
+              }
+            }, 100)
+          } catch (error) {
+            console.error('Error stopping existing wake word recognition:', error)
+            setIsWakeWordListening(false)
+          }
+        }
+      } else {
+        console.log('Not resuming wake word - conditions not met:', {
+          wasActive: wasWakeWordActiveBeforePause.current,
+          modeEnabled: wakeWordMode,
+          canUse: canUseWakeWord,
+          voiceEnabled: voiceInputEnabled,
+          notListening: !isListening
+        })
+      }
+      
+      // Réinitialiser l'état mémorisé après usage
+      wasWakeWordActiveBeforePause.current = false
+    }, 800) // Délai principal
+  }, [canUseWakeWord, voiceInputEnabled, isListening, isWakeWordListening, wakeWordMode])
+
   return {
     // State
     isListening,
@@ -419,6 +512,8 @@ export const useVoiceRecognition = (
     stopListening,
     toggleWakeWord,
     setQuestion,
-    resetVoiceInput
+    resetVoiceInput,
+    pauseVoiceRecognition,
+    resumeVoiceRecognition
   }
 }

@@ -85,7 +85,16 @@ const Chat = () => {
   const [currentUser, setCurrentUser] = useState<string>("");
   const [encryptedCurrentUser, setEncryptedCurrentUser] = useState<string>("");
   const [userFullDef, setUserFullDef] = useState<string>("");
-  const [appReady, setAppReady] = useState(false); 
+  const [appReady, setAppReady] = useState(false);
+  
+  // Voice recognition functions from QuestionInput
+  const [pauseVoiceRecognition, setPauseVoiceRecognition] = useState<(() => void) | undefined>(undefined)
+  const [resumeVoiceRecognition, setResumeVoiceRecognition] = useState<(() => void) | undefined>(undefined) 
+
+  const handleVoiceRecognitionReady = (pause: () => void, resume: () => void) => {
+    setPauseVoiceRecognition(() => pause)
+    setResumeVoiceRecognition(() => resume)
+  }
 
   const handleCloseAlert = (event?: React.SyntheticEvent | Event, reason?: string) => {
       if (reason == "clickaway"){
@@ -978,6 +987,9 @@ const Chat = () => {
                           onCitationClicked={c => onShowCitation(c)}
                           onExectResultClicked={() => onShowExecResult(answerId)}
                           language={localizedStrings.getLanguage()}
+                          pauseVoiceRecognition={pauseVoiceRecognition}
+                          resumeVoiceRecognition={resumeVoiceRecognition}
+                          isStreaming={isLoading}
                         />}
                       </div>
                     ) : answer.role === ERROR ? (
@@ -1003,6 +1015,9 @@ const Chat = () => {
                         onCitationClicked={() => null}
                         onExectResultClicked={() => null}
                         language={localizedStrings.getLanguage()}
+                        pauseVoiceRecognition={pauseVoiceRecognition}
+                        resumeVoiceRecognition={resumeVoiceRecognition}
+                        isStreaming={true}
                       />
                     </div>
                   </>
@@ -1102,6 +1117,7 @@ const Chat = () => {
                 conversationId={
                   appStateContext?.state.currentChat?.id ? appStateContext?.state.currentChat?.id : undefined
                 }
+                onVoiceRecognitionReady={handleVoiceRecognitionReady}
               />
             </Stack>
             )}

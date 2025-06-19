@@ -139,13 +139,16 @@ export const AppStateProvider: React.FC<AppStateProviderProps> = ({ children }) 
       return null
     }
 
-    const loadAudioSettings = (): boolean => {
+    const loadAudioSettings = (): boolean | null => {
       try {
         const saved = localStorage.getItem('isAutoAudioEnabled')
+        if (saved === null) {
+          return null // Aucune préférence sauvegardée
+        }
         return saved === 'true'
       } catch (error) {
         console.warn('Failed to load audio settings from localStorage:', error)
-        return false
+        return null
       }
     }
 
@@ -155,7 +158,11 @@ export const AppStateProvider: React.FC<AppStateProviderProps> = ({ children }) 
     }
 
     const savedAudioSetting = loadAudioSettings()
-    dispatch({ type: 'TOGGLE_AUTO_AUDIO', payload: savedAudioSetting })
+    // Ne dispatcher que si une préférence existe dans localStorage
+    if (savedAudioSetting !== null) {
+      dispatch({ type: 'TOGGLE_AUTO_AUDIO', payload: savedAudioSetting })
+    }
+    // Sinon, garder la valeur par défaut (false) définie dans initialState
   }, [])
 
   useEffect(() => {
