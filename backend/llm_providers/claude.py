@@ -805,7 +805,7 @@ class ClaudeProvider(LLMProvider):
             Enhanced messages with search context and multilingual instructions
         """
         # Build context and citations from search results
-        search_context, citations = build_search_context(search_results)
+        search_context, citations = build_search_context(search_results, app_settings.base_settings.citation_content_max_length)
         
         if not search_context:
             self.logger.warning("No search context built from results")

@@ -100,7 +100,8 @@ class _AzureOpenAISettings(BaseSettings):
         env_prefix="AZURE_OPENAI_",
         env_file=DOTENV_PATH,
         extra='ignore',
-        env_ignore_empty=True
+        env_ignore_empty=True,
+        protected_namespaces=('settings_',)
     )
     
     model: str
@@ -910,6 +911,7 @@ class _BaseSettings(BaseSettings):
     use_promptflow: bool = False
     llm_provider: str = "AZURE_OPENAI"  # Can be AZURE_OPENAI, CLAUDE, OPENAI_DIRECT, MISTRAL, or GEMINI
     available_llm_providers: Optional[List[str]] = ["AZURE_OPENAI", "CLAUDE", "OPENAI_DIRECT", "MISTRAL", "GEMINI"]  # List of providers to expose in UI
+    citation_content_max_length: int = 1000  # Maximum length for citation content displayed in UI
     
     @field_validator('available_llm_providers', mode='before')
     @classmethod

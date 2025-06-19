@@ -281,13 +281,14 @@ class AzureSearchService:
         return str(value) if value else None
 
 
-def create_citation_from_document(doc: Dict[str, Any], doc_id: int) -> Dict[str, Any]:
+def create_citation_from_document(doc: Dict[str, Any], doc_id: int, max_length: int = 200) -> Dict[str, Any]:
     """
     Create a citation object from a search document.
     
     Args:
         doc: Document dictionary from search results
         doc_id: Unique identifier for the document
+        max_length: Maximum length for citation content (default: 200)
         
     Returns:
         Citation dictionary compatible with frontend display
@@ -298,19 +299,20 @@ def create_citation_from_document(doc: Dict[str, Any], doc_id: int) -> Dict[str,
     return {
         "id": f"doc{doc_id}",
         "title": title,
-        "content": content[:200] + "..." if len(content) > 200 else content,
+        "content": content[:max_length] + "..." if len(content) > max_length else content,
         "url": doc.get("url", ""),
         "filepath": doc.get("filename", doc.get("metadata", {}).get("source", "Document")),
         "chunk_id": str(doc_id)
     }
 
 
-def build_search_context(search_results: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+def build_search_context(search_results: List[Dict[str, Any]], citation_max_length: int = 200) -> tuple[str, List[Dict[str, Any]]]:
     """
     Build search context and citations from search results.
     
     Args:
         search_results: List of documents from Azure Search
+        citation_max_length: Maximum length for citation content (default: 200)
         
     Returns:
         Tuple of (context_string, citations_list)
@@ -335,7 +337,7 @@ def build_search_context(search_results: List[Dict[str, Any]]) -> tuple[str, Lis
             context_parts.append(f"[doc{doc_id}] {title}\n{content}")
             
             # Create citation
-            citation = create_citation_from_document(doc, doc_id)
+            citation = create_citation_from_document(doc, doc_id, citation_max_length)
             citations.append(citation)
     
     search_context = "\n\n".join(context_parts)
