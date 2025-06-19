@@ -38,7 +38,7 @@ async def format_as_ndjson(r, provider_name="LLM_SERVICE"):
             language="fr"  # Default to French for AskMe
         )
         
-        yield json.dumps(error_response)
+        yield json.dumps(error_response) + "\n"
 
 
 def parse_multi_columns(columns: str) -> list:
