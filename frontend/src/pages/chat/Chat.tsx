@@ -908,6 +908,53 @@ const Chat = () => {
     return null;
   }
 
+  const toggleGlobalAutoAudio = () => {
+    const newState = !appStateContext?.state.isAutoAudioEnabled
+    
+    // Mettre à jour l'état global
+    appStateContext?.dispatch({
+      type: 'TOGGLE_AUTO_AUDIO',
+      payload: newState
+    })
+    
+    // Si on ACTIVE l'auto-lecture, déclencher la lecture du dernier message
+    if (newState && messages && messages.length > 0) {
+      // Trouver le dernier message assistant
+      const lastAssistantMessage = [...messages].reverse().find(msg => msg.role === 'assistant')
+      
+      if (lastAssistantMessage?.content && typeof lastAssistantMessage.content === 'string') {
+        // Déclencher le clic sur le bouton audio du dernier message via le DOM
+        setTimeout(() => {
+          const lastMessageContainer = document.querySelector(`[data-message-id="${lastAssistantMessage.id}"]`)
+          if (lastMessageContainer) {
+            // Chercher le bouton de lecture dans ce message (pas celui d'arrêt)
+            const playButton = lastMessageContainer.querySelector('[aria-label*="playAudio"], [aria-label*="Lire"]')
+            if (playButton && playButton instanceof HTMLElement) {
+              playButton.click()
+            }
+          }
+        }, 100)
+      }
+    }
+    
+    // Si on DÉSACTIVE l'auto-lecture, arrêter toute lecture en cours
+    if (!newState) {
+      // Arrêter tous les audios sur la page
+      const allAudioElements = document.querySelectorAll('audio')
+      allAudioElements.forEach(audio => {
+        if (!audio.paused) {
+          audio.pause()
+          audio.currentTime = 0
+        }
+      })
+      
+      // Arrêter la synthèse vocale du navigateur
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }
+
   const disabledButton = () => {
     return (
       isLoading ||

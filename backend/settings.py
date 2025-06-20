@@ -917,6 +917,7 @@ class _BaseSettings(BaseSettings):
     voice_input_enabled: bool = True  # Enable voice input functionality
     wake_word_enabled: bool = True    # Enable wake word detection
     wake_word_phrases: Optional[List[str]] = ["asmi", "askme", "askmi", "asqmi"]  # Wake word phrases
+    wake_word_variants: Optional[str] = None  # Wake word phonetic variants (format: word|variant1|variant2,word2|variant3)
     
     # Azure Speech Services Configuration
     azure_speech_enabled: bool = False  # Enable Azure Speech Services for TTS
@@ -929,9 +930,30 @@ class _BaseSettings(BaseSettings):
     @classmethod
     def split_wake_word_phrases(cls, comma_separated_string: str) -> List[str]:
         if isinstance(comma_separated_string, str) and len(comma_separated_string) > 0:
-            return [phrase.strip().lower() for phrase in comma_separated_string.split(',')]
+            return [phrase.strip() for phrase in comma_separated_string.split(',')]
         
         return ["asmi", "askme", "askmi", "asqmi"]
+    
+    def get_wake_word_variants_map(self) -> dict:
+        """Parse wake_word_variants into a map of main_word -> [variants]"""
+        variants_map = {}
+        
+        # D'abord, ajouter les phrases principales
+        for phrase in self.wake_word_phrases:
+            variants_map[phrase.lower()] = [phrase.lower()]
+        
+        # Ensuite, traiter les variantes si définies
+        if self.wake_word_variants:
+            for phrase_group in self.wake_word_variants.split(','):
+                phrase_group = phrase_group.strip()
+                if phrase_group:
+                    variants = [variant.strip().lower() for variant in phrase_group.split('|')]
+                    if variants:
+                        main_word = variants[0]
+                        # Ajouter toutes les variantes pour ce mot
+                        variants_map[main_word] = variants
+        
+        return variants_map
     
     @field_validator('available_llm_providers', mode='before')
     @classmethod

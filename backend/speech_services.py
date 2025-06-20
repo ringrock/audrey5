@@ -272,6 +272,9 @@ def generate_ssml(text: str, voice_name: str) -> str:
     # Pauses après les introductions (phrases commençant par Bonjour, Je vais, etc.)
     enhanced_text = re.sub(r'((?:Bonjour|Je vais|Voici|Voilà)[^.]+\.)\s+', r'\1 <break time="700ms"/>', enhanced_text)
     
+    # Pauses après les deux-points - pause moyenne pour introduire une suite/explication
+    enhanced_text = re.sub(r':\s*', r': <break time="500ms"/>', enhanced_text)
+    
     # Pauses entre éléments de liste - détecter les patterns d'éléments de liste consécutifs
     enhanced_text = re.sub(r'([a-zàâäéèêëïîôöùûüÿç]{2,})\.\s+([A-ZÀÂÄÉÈÊËÏÎÔÖÙÛÜŸÇ][a-zàâäéèêëïîôöùûüÿç]+)', r'\1. <break time="300ms"/>\2', enhanced_text)
     
@@ -283,7 +286,7 @@ def generate_ssml(text: str, voice_name: str) -> str:
     
     return f"""<speak version='1.0' xml:lang='{voice_name[:5]}'>
         <voice xml:lang='{voice_name[:5]}' name='{voice_name}'>
-            <prosody rate='1.08' pitch='-6%'>
+            <prosody rate='1.15' pitch='-6%'>
                 {enhanced_text}
             </prosody>
         </voice>

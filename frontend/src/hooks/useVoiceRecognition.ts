@@ -5,6 +5,7 @@ interface VoiceRecognitionConfig {
   canUseWakeWord: boolean
   wakeWordEnabled: boolean
   wakeWordPhrases: string[]
+  wakeWordVariants: Record<string, string[]>
 }
 
 interface VoiceRecognitionState {
@@ -43,7 +44,7 @@ export const useVoiceRecognition = (
   const lastClickTimeRef = useRef<number>(0)
   const singleClickTimeoutRef = useRef<number | null>(null)
 
-  const { voiceInputEnabled, canUseWakeWord, wakeWordEnabled, wakeWordPhrases } = config
+  const { voiceInputEnabled, canUseWakeWord, wakeWordEnabled, wakeWordPhrases, wakeWordVariants } = config
 
   // Initialize speech recognition
   useEffect(() => {
@@ -107,27 +108,79 @@ export const useVoiceRecognition = (
         wakeWordRecognition.onresult = (event: any) => {
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript.toLowerCase().trim()
-           // console.log('Wake word detection:', transcript, '(final:', event.results[i].isFinal, ')')
             
-            const detected = wakeWordPhrases.some((phrase: string) => 
-              transcript.includes(phrase.toLowerCase())
-            )
+            // Fonction pour normaliser le texte (enlever les accents)
+            const normalizeText = (text: string) => {
+              return text.toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '') // Enlever les accents
+                .trim()
+            }
             
-            if (detected && event.results[i].isFinal) {
-              console.log('Wake word detected! Using full transcript as question...')
+            const normalizedTranscript = normalizeText(transcript)
+            
+            // Vérifier la détection avec les variantes phonétiques
+            let detectedPhrase = ''
+            let detectedVariant = ''
+            
+            // D'abord vérifier les variantes phonétiques
+            for (const [mainPhrase, variants] of Object.entries(wakeWordVariants)) {
+              for (const variant of variants) {
+                const normalizedVariant = normalizeText(variant)
+                if (normalizedTranscript.includes(normalizedVariant)) {
+                  detectedPhrase = mainPhrase
+                  detectedVariant = variant
+                  break
+                }
+              }
+              if (detectedPhrase) break
+            }
+            
+            // Si pas trouvé dans les variantes, vérifier les phrases principales
+            if (!detectedPhrase) {
+              for (const phrase of wakeWordPhrases) {
+                const normalizedPhrase = normalizeText(phrase)
+                if (normalizedTranscript.includes(normalizedPhrase)) {
+                  detectedPhrase = phrase
+                  detectedVariant = phrase
+                  break
+                }
+              }
+            }
+            
+            if (detectedPhrase && event.results[i].isFinal) {
+              console.log(`Wake word detected! Phrase: "${detectedPhrase}", Variant: "${detectedVariant}"`)
+              console.log('Original transcript:', transcript)
+              console.log('Normalized transcript:', normalizedTranscript)
               
               wakeWordRecognition.stop()
               setIsWakeWordListening(false)
               
               // Extract question part after wake word
               let questionPart = ''
-              for (const phrase of wakeWordPhrases) {
-                const index = transcript.indexOf(phrase.toLowerCase())
-                if (index !== -1) {
-                  questionPart = transcript.substring(index + phrase.length).trim()
-                  console.log(`Mot-clé "${phrase}" détecté, partie extraite:`, questionPart)
-                  break
+              const normalizedVariant = normalizeText(detectedVariant)
+              const index = normalizedTranscript.indexOf(normalizedVariant)
+              if (index !== -1) {
+                // Utiliser l'index dans le transcript original pour préserver la casse
+                const originalWords = transcript.split(' ')
+                const normalizedWords = normalizedTranscript.split(' ')
+                
+                let wordCount = 0
+                for (let j = 0; j < normalizedWords.length; j++) {
+                  if (normalizedTranscript.substring(0, normalizedWords.slice(0, j + 1).join(' ').length).includes(normalizedVariant)) {
+                    wordCount = j + 1
+                    break
+                  }
                 }
+                
+                if (wordCount > 0 && wordCount < originalWords.length) {
+                  questionPart = originalWords.slice(wordCount).join(' ').trim()
+                } else {
+                  // Fallback: utiliser l'approche basique
+                  questionPart = transcript.substring(index + normalizedVariant.length).trim()
+                }
+                
+                console.log(`Wake word "${detectedPhrase}" (variant "${detectedVariant}") detected, extracted question:`, questionPart)
               }
               
               console.log('Question extraite:', questionPart)
@@ -256,7 +309,7 @@ export const useVoiceRecognition = (
         singleClickTimeoutRef.current = null
       }
     }
-  }, [voiceInputEnabled, canUseWakeWord, wakeWordPhrases])
+  }, [voiceInputEnabled, canUseWakeWord, wakeWordPhrases, wakeWordVariants])
 
   // Start/stop listening functions
   const startListening = useCallback(() => {

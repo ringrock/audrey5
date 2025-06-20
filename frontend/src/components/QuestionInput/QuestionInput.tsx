@@ -1,6 +1,6 @@
 import { useContext, useState, useEffect, useRef, useCallback } from 'react'
 import { FontIcon, Stack, TextField } from '@fluentui/react'
-import { SendRegular, Mic20Regular, MicOff20Regular } from '@fluentui/react-icons'
+import { SendRegular, Mic20Regular, MicOff20Regular, Speaker220Regular, SpeakerOff20Regular } from '@fluentui/react-icons'
 
 import Send from '../../assets/Send.svg'
 
@@ -38,13 +38,15 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const canUseWakeWord = appStateContext?.state.frontendSettings?.wake_word_enabled ?? true
   const wakeWordEnabled = appStateContext?.state.frontendSettings?.wake_word_enabled ?? true
   const wakeWordPhrases = appStateContext?.state.frontendSettings?.wake_word_phrases ?? ['asmi', 'askme', 'askmi', 'asqmi']
+  const wakeWordVariants = appStateContext?.state.frontendSettings?.wake_word_variants ?? {}
   
   // Use voice recognition hook
   const voiceRecognition = useVoiceRecognition({
     voiceInputEnabled,
     canUseWakeWord,
     wakeWordEnabled,
-    wakeWordPhrases
+    wakeWordPhrases,
+    wakeWordVariants
   })
 
   // Sync question state with voice recognition
@@ -71,6 +73,33 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       )
     }
   }, [onVoiceRecognitionReady, voiceRecognition.pauseVoiceRecognition, voiceRecognition.resumeVoiceRecognition])
+  
+  // Auto-audio functionality
+  const toggleGlobalAutoAudio = () => {
+    const newState = !appStateContext?.state.isAutoAudioEnabled
+    
+    appStateContext?.dispatch({
+      type: 'TOGGLE_AUTO_AUDIO',
+      payload: newState
+    })
+    
+    // Si on DÉSACTIVE l'auto-lecture, arrêter la lecture en cours
+    if (!newState) {
+      const allAudioElements = document.querySelectorAll('audio')
+      allAudioElements.forEach((audio) => {
+        if (!audio.paused) {
+          audio.pause()
+          audio.currentTime = 0
+          audio.src = ''
+        }
+      })
+      
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel()
+      }
+    }
+    // Si on ACTIVE l'auto-lecture, ne rien faire - laisse l'auto-lecture se déclencher naturellement sur le prochain nouveau message
+  }
   
   // Load history from localStorage on component mount
   useEffect(() => {
@@ -437,6 +466,22 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             aria-label="Upload Image"
           />
         </label>
+      </div>
+      {/* Auto-audio toggle button */}
+      <div className={styles.autoAudioContainer}>
+        <button
+          type="button"
+          className={`${styles.voiceButton} ${appStateContext?.state.isAutoAudioEnabled ? styles.autoAudioActive : ''}`}
+          onClick={toggleGlobalAutoAudio}
+          aria-label={appStateContext?.state.isAutoAudioEnabled ? "Désactiver la lecture automatique" : "Activer la lecture automatique"}
+          title={appStateContext?.state.isAutoAudioEnabled ? "Désactiver la lecture automatique" : "Activer la lecture automatique"}
+        >
+          {appStateContext?.state.isAutoAudioEnabled ? (
+            <Speaker220Regular className={styles.voiceIcon} />
+          ) : (
+            <SpeakerOff20Regular className={styles.voiceIcon} />
+          )}
+        </button>
       </div>
       {voiceInputEnabled && voiceRecognition.speechSupported && (
         <div className={styles.voiceInputContainer}>

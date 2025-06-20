@@ -196,6 +196,12 @@
   color: #323130;
 }
 
+.autoAudioContainer {
+  position: absolute;
+  right: 96px;
+  top: 8px;
+}
+
 .voiceInputContainer {
   position: absolute;
   right: 60px;
@@ -247,6 +253,18 @@
 
 .voiceButton:hover:not(.disabled) .voiceIcon {
   color: #106ebe;
+}
+
+.voiceButton.autoAudioActive {
+  background-color: #0078d4;
+}
+
+.voiceButton.autoAudioActive .voiceIcon {
+  color: #ffffff;
+}
+
+.voiceButton.autoAudioActive:hover .voiceIcon {
+  color: #ffffff;
 }
 
 @keyframes pulse {

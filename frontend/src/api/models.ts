@@ -147,6 +147,7 @@ export type FrontendSettings = {
   voice_input_enabled?: boolean
   wake_word_enabled?: boolean
   wake_word_phrases?: string[]
+  wake_word_variants?: Record<string, string[]>
   azure_speech_enabled?: boolean
   azure_speech_voice_fr?: string
   azure_speech_voice_en?: string

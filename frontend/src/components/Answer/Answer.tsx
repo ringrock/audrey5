@@ -75,35 +75,61 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     setChevronIsExpanded(isRefAccordionOpen)
   }, [isRefAccordionOpen])
 
-  // Auto-lecture audio si activée - déclenche la fonction de lecture manuelle
+  // Auto-lecture audio si activée - UNIQUEMENT pour le dernier message assistant
   useEffect(() => {
-    // Attendre que le message soit complètement généré
+    // Déclencher SEULEMENT si c'est un nouveau message ET que l'auto-lecture est activée ET que c'est le dernier message assistant
     if (appStateContext?.state.isAutoAudioEnabled && 
         parsedAnswer?.markdownFormatText && 
         answer.message_id !== undefined &&
         !isStreaming &&
-        !isPlaying && // S'assurer qu'aucune lecture n'est en cours
-        autoPlayTriggeredRef.current !== answer.message_id) { // Éviter les boucles infinies
+        !isPlaying &&
+        autoPlayTriggeredRef.current !== answer.message_id) {
       
-      // Marquer ce message comme déclenché
-      autoPlayTriggeredRef.current = answer.message_id
+      console.log('🔍 Vérification auto-lecture pour message:', answer.message_id)
       
-      // Délai pour s'assurer que le composant est complètement rendu
+      // Attendre un peu que le DOM soit à jour
       const timeoutId = setTimeout(() => {
-        // Triple vérification avant le déclenchement
-        if (appStateContext?.state.isAutoAudioEnabled && 
-            !isPlaying && 
-            autoPlayTriggeredRef.current === answer.message_id) {
-          playAudio()
+        // Vérifier que ce message est bien le dernier message assistant de la page
+        const allAssistantMessages = document.querySelectorAll('[data-message-role="assistant"]')
+        const currentMessageElement = document.querySelector(`[data-message-id="${answer.message_id}"]`)
+        
+        console.log('🔍 Messages assistant trouvés:', allAssistantMessages.length)
+        console.log('🔍 Élément actuel trouvé:', !!currentMessageElement)
+        
+        if (allAssistantMessages.length > 0) {
+          const lastAssistantMessage = allAssistantMessages[allAssistantMessages.length - 1]
+          const lastMessageId = lastAssistantMessage.getAttribute('data-message-id')
+          console.log('🔍 Dernier message ID:', lastMessageId, '| Message actuel ID:', answer.message_id)
+          
+          // Seulement déclencher si c'est le dernier message assistant
+          if (currentMessageElement && currentMessageElement === lastAssistantMessage) {
+            
+            // Marquer immédiatement pour éviter les re-triggers
+            autoPlayTriggeredRef.current = answer.message_id || null
+            
+            // Vérifier les conditions audio avant de déclencher
+            const anyAudioPlaying = Array.from(document.querySelectorAll('audio')).some(audio => !audio.paused)
+            const browserSpeechPlaying = window.speechSynthesis.speaking
+            
+            if (appStateContext?.state.isAutoAudioEnabled && 
+                !isPlaying && 
+                !anyAudioPlaying &&
+                !browserSpeechPlaying &&
+                autoPlayTriggeredRef.current === answer.message_id) {
+              
+              console.log('🔊 Auto-lecture déclenchée pour le dernier message:', answer.message_id)
+              playAudio()
+            }
+          } else {
+            console.log('🔍 Ce message n\'est pas le dernier - pas d\'auto-lecture')
+          }
         }
-      }, 800) // Délai légèrement plus long pour éviter les conflits
+      }, 300) // Délai réduit pour une expérience plus réactive
       
-      // Nettoyer le timeout si le composant se démonte ou si les dépendances changent
-      return () => {
-        clearTimeout(timeoutId)
-      }
+      return () => clearTimeout(timeoutId)
     }
-  }, [parsedAnswer?.markdownFormatText, appStateContext?.state.isAutoAudioEnabled, answer.message_id, isStreaming, isPlaying])
+  }, [parsedAnswer?.markdownFormatText, answer.message_id, isStreaming])
+  // IMPORTANT: Ne pas inclure isPlaying ni isAutoAudioEnabled dans les dépendances pour éviter les re-triggers
 
   useEffect(() => {
     if (answer.message_id == undefined) return
@@ -251,7 +277,19 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     // Suspendre l'écoute vocale pour éviter que le système s'entende parler
     pauseVoiceRecognition?.()
     
-    // Stopper toute lecture en cours au niveau système
+    // IMPORTANT: Arrêter SEULEMENT les audios qui jouent actuellement
+    // Cela évite que des lectures précédentes reprennent en parallèle
+    // mais n'interfère pas avec l'auto-lecture des autres composants
+    const allAudioElements = document.querySelectorAll('audio')
+    allAudioElements.forEach((audio, index) => {
+      if (!audio.paused) {
+        audio.pause()
+        audio.currentTime = 0
+        audio.src = '' // Force cleanup seulement pour les audios en cours
+      }
+    })
+    
+    // Stopper toute lecture en cours au niveau système (browser speech)
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel()
     }
@@ -510,17 +548,31 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     // Marquer que c'est un arrêt manuel pour éviter le fallback
     isManualStopRef.current = true
     
+    // Arrêter TOUS les audios de la page pour éviter les reprises parallèles
+    const allAudioElements = document.querySelectorAll('audio')
+    allAudioElements.forEach((audio) => {
+      if (!audio.paused) {
+        audio.pause()
+        audio.currentTime = 0
+        audio.src = '' // Force cleanup
+      }
+    })
+    
     // Arrêter la synthèse vocale du navigateur
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel()
     }
     
-    // Arrêter tous les éléments audio Azure Speech
+    // Arrêter tous les éléments audio Azure Speech de ce composant
     audioElementsRef.current.forEach((audio, index) => {
       try {
         audio.pause()
         audio.currentTime = 0
-        audio.src = '' // Force cleanup
+        audio.src = '' // Force cleanup pour empêcher la reprise
+        // Supprimer l'élément audio du DOM pour éviter qu'il reprenne plus tard
+        if (audio.parentNode) {
+          audio.parentNode.removeChild(audio)
+        }
       } catch (err) {
         console.error(`Error stopping audio segment ${index + 1}:`, err)
       }
@@ -554,19 +606,6 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     }
   }
 
-  const toggleAutoAudio = () => {
-    const newState = !appStateContext?.state.isAutoAudioEnabled
-    
-    // Si on désactive l'auto-lecture ET qu'une lecture est en cours, l'arrêter
-    if (!newState && isPlaying) {
-      stopAudio()
-    }
-    
-    appStateContext?.dispatch({
-      type: 'TOGGLE_AUTO_AUDIO',
-      payload: newState
-    })
-  }
 
   const shouldDisplayCitationLink = (citation : Citation) => {
     
@@ -806,7 +845,12 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
 
   return (
     <>
-      <Stack className={styles.answerContainer} tabIndex={0}>
+      <Stack 
+        className={styles.answerContainer} 
+        tabIndex={0}
+        data-message-role="assistant"
+        data-message-id={answer.message_id}
+      >
         <Stack.Item>
           <Stack horizontal grow>
             <Stack.Item grow>
@@ -922,19 +966,6 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
             <span className={styles.answerDisclaimer}>{localizedStrings.aiDisclaimer}</span>
-            <span 
-              className={styles.audioToggle}
-              onClick={toggleAutoAudio}
-              style={{ 
-                marginLeft: '10px', 
-                color: appStateContext?.state.isAutoAudioEnabled ? 'darkgreen' : 'slategray',
-                cursor: 'pointer',
-                fontSize: '12px'
-              }}
-              title={appStateContext?.state.isAutoAudioEnabled ? localizedStrings.disableAutoAudio : localizedStrings.enableAutoAudio}
-            >
-              🔊 {appStateContext?.state.isAutoAudioEnabled ? 'ON' : 'OFF'}
-            </span>
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>

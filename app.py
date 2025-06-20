@@ -133,6 +133,7 @@ frontend_settings = {
     "voice_input_enabled": app_settings.base_settings.voice_input_enabled,
     "wake_word_enabled": app_settings.base_settings.wake_word_enabled,
     "wake_word_phrases": app_settings.base_settings.wake_word_phrases,
+    "wake_word_variants": app_settings.base_settings.get_wake_word_variants_map(),
     "azure_speech_enabled": app_settings.base_settings.azure_speech_enabled,
     "azure_speech_voice_fr": app_settings.base_settings.azure_speech_voice_fr,
     "azure_speech_voice_en": app_settings.base_settings.azure_speech_voice_en,
