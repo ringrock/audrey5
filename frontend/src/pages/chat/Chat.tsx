@@ -955,6 +955,29 @@ const Chat = () => {
     }
   }
 
+  // Fonction pour extraire l'image de la question précédente
+  const getQuestionImageForAnswer = (answerIndex: number): string | undefined => {
+    // La question précédente est à l'index answerIndex - 1
+    const questionMessage = messages[answerIndex - 1]
+    
+    if (!questionMessage || questionMessage.role !== 'user') {
+      return undefined
+    }
+    
+    // Vérifier si le contenu est un tableau (multimodal avec image)
+    if (Array.isArray(questionMessage.content)) {
+      const imageContent = questionMessage.content.find(
+        (content) => content.type === 'image_url'
+      )
+      
+      if (imageContent && 'image_url' in imageContent) {
+        return imageContent.image_url.url
+      }
+    }
+    
+    return undefined
+  }
+
   const disabledButton = () => {
     return (
       isLoading ||
@@ -1037,6 +1060,7 @@ const Chat = () => {
                           pauseVoiceRecognition={pauseVoiceRecognition}
                           resumeVoiceRecognition={resumeVoiceRecognition}
                           isStreaming={isLoading}
+                          questionImage={getQuestionImageForAnswer(index)}
                         />}
                       </div>
                     ) : answer.role === ERROR ? (
@@ -1065,6 +1089,7 @@ const Chat = () => {
                         pauseVoiceRecognition={pauseVoiceRecognition}
                         resumeVoiceRecognition={resumeVoiceRecognition}
                         isStreaming={true}
+                        questionImage={undefined}
                       />
                     </div>
                   </>

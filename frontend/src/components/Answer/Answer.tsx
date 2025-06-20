@@ -30,9 +30,10 @@ interface Props {
   pauseVoiceRecognition?: () => void
   resumeVoiceRecognition?: () => void
   isStreaming?: boolean
+  questionImage?: string // Image base64 de la question précédente (optionnelle)
 }
 
-export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language, pauseVoiceRecognition, resumeVoiceRecognition, isStreaming}: Props) => {
+export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language, pauseVoiceRecognition, resumeVoiceRecognition, isStreaming, questionImage}: Props) => {
   const appStateContext = useContext(AppStateContext)
   const initializeAnswerFeedback = (answer: AskResponse) => {
     if (answer.message_id == undefined) return undefined
@@ -668,10 +669,18 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
 
   const postCreateRecord = (description : string) => {
 
-    const message = {
+    const message: any = {
       action: "CreateRecord",
       description: description,
     };
+    
+    // Ajouter l'image si elle est disponible
+    if (questionImage) {
+      message.image = questionImage;
+      console.log('📷 Image ajoutée au CreateRecord:', questionImage.substring(0, 50) + '...')
+    } else {
+      console.log('📷 Aucune image disponible pour le CreateRecord')
+    }
     
     // Envoi du message au parent
     window.parent.postMessage(message, "*");
