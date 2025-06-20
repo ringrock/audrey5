@@ -57,6 +57,9 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   const [isPlaying, setIsPlaying] = useState(false)
   const [speechSynthesis, setSpeechSynthesis] = useState<SpeechSynthesisUtterance | null>(null)
   const autoPlayTriggeredRef = useRef<string | null>(null)
+  const audioElementsRef = useRef<HTMLAudioElement[]>([])
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const isManualStopRef = useRef<boolean>(false)
   const FEEDBACK_ENABLED =
     appStateContext?.state.frontendSettings?.feedback_enabled && appStateContext?.state.isCosmosDBAvailable?.cosmosDB
   const SANITIZE_ANSWER = appStateContext?.state.frontendSettings?.sanitize_answer
@@ -79,6 +82,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
         parsedAnswer?.markdownFormatText && 
         answer.message_id !== undefined &&
         !isStreaming &&
+        !isPlaying && // S'assurer qu'aucune lecture n'est en cours
         autoPlayTriggeredRef.current !== answer.message_id) { // Éviter les boucles infinies
       
       // Marquer ce message comme déclenché
@@ -86,15 +90,18 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
       
       // Délai pour s'assurer que le composant est complètement rendu
       const timeoutId = setTimeout(() => {
-        // Vérifier que l'auto-lecture est toujours activée avant de lancer
-        if (appStateContext?.state.isAutoAudioEnabled && !isPlaying) {
-          console.log('Auto-lecture déclenchée pour le message:', answer.message_id)
+        // Triple vérification avant le déclenchement
+        if (appStateContext?.state.isAutoAudioEnabled && 
+            !isPlaying && 
+            autoPlayTriggeredRef.current === answer.message_id) {
           playAudio()
         }
       }, 800) // Délai légèrement plus long pour éviter les conflits
       
       // Nettoyer le timeout si le composant se démonte ou si les dépendances changent
-      return () => clearTimeout(timeoutId)
+      return () => {
+        clearTimeout(timeoutId)
+      }
     }
   }, [parsedAnswer?.markdownFormatText, appStateContext?.state.isAutoAudioEnabled, answer.message_id, isStreaming, isPlaying])
 
@@ -231,6 +238,9 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   }
 
   const playAudio = async () => {
+    // Réinitialiser le flag d'arrêt manuel au début de toute nouvelle lecture
+    isManualStopRef.current = false
+    
     if (!parsedAnswer?.markdownFormatText) return
     
     if (isPlaying) {
@@ -241,7 +251,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     // Suspendre l'écoute vocale pour éviter que le système s'entende parler
     pauseVoiceRecognition?.()
     
-    // Stopper toute lecture en cours
+    // Stopper toute lecture en cours au niveau système
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel()
     }
@@ -294,19 +304,39 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
         
         const audio = new Audio(audioData)
         
+        // IMPORTANT: Ajouter l'élément audio à la référence pour pouvoir l'arrêter
+        audioElementsRef.current = [audio]
+        
         audio.onended = () => {
           setIsPlaying(false)
           setSpeechSynthesis(null)
+          // Nettoyer les éléments audio après lecture
+          audioElementsRef.current = []
+          // Nettoyer la référence d'auto-play après lecture complète
+          autoPlayTriggeredRef.current = null
+          // Réinitialiser le flag d'arrêt manuel
+          isManualStopRef.current = false
           // Reprendre l'écoute vocale après la lecture
           resumeVoiceRecognition?.()
         }
         
-        audio.onerror = async () => {
+        audio.onerror = async (event) => {
           setIsPlaying(false)
           setSpeechSynthesis(null)
+          // Nettoyer les éléments audio en cas d'erreur
+          audioElementsRef.current = []
+          // Nettoyer la référence d'auto-play en cas d'erreur
+          autoPlayTriggeredRef.current = null
+          
           // Reprendre l'écoute vocale en cas d'erreur
           resumeVoiceRecognition?.()
-          await playAudioWithBrowser(text)
+          
+          // Seulement faire le fallback si ce n'est pas un arrêt manuel
+          if (!isManualStopRef.current) {
+            await playAudioWithBrowser(text)
+          } else {
+            isManualStopRef.current = false // Reset for next time
+          }
         }
         
         await audio.play()
@@ -316,6 +346,10 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
       console.error('Azure Speech synthesis error:', err)
       setIsPlaying(false)
       setSpeechSynthesis(null)
+      // Nettoyer les éléments audio en cas d'erreur
+      audioElementsRef.current = []
+      // Nettoyer la référence d'auto-play en cas d'erreur
+      autoPlayTriggeredRef.current = null
       // Reprendre l'écoute vocale en cas d'erreur
       resumeVoiceRecognition?.()
       await playAudioWithBrowser(text)
@@ -324,48 +358,73 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   
   const playAudioSegments = async (segments: string[], contentType: string) => {
     try {
-      console.log(`🔊 Starting playback of ${segments.length} segments`)
+      // Créer un nouveau AbortController pour cette lecture
+      abortControllerRef.current = new AbortController()
+      const signal = abortControllerRef.current.signal
+      
+      // Nettoyer les éléments audio précédents
+      audioElementsRef.current = []
       
       for (let i = 0; i < segments.length; i++) {
-        console.log(`🔊 Playing segment ${i + 1}/${segments.length}`)
+        // Vérifier si l'arrêt a été demandé
+        if (signal.aborted) {
+          throw new Error('Playback aborted')
+        }
         
         const audioData = `data:${contentType};base64,${segments[i]}`
         const audio = new Audio(audioData)
+        audioElementsRef.current.push(audio)
         
         // Attendre que ce segment soit fini avant de passer au suivant
         await new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            audio.pause()
+            audio.currentTime = 0
+            reject(new Error('Playback aborted'))
+          }
+          
+          signal.addEventListener('abort', onAbort)
+          
           audio.onended = () => {
-            console.log(`✅ Segment ${i + 1} completed`)
+            signal.removeEventListener('abort', onAbort)
             resolve()
           }
           audio.onerror = (event) => {
-            console.error(`❌ Error playing segment ${i + 1}:`, event)
+            signal.removeEventListener('abort', onAbort)
+            console.error(`Error playing segment ${i + 1}:`, event)
             reject(new Error(`Error playing segment ${i}`))
           }
           
-          audio.play().then(() => {
-            console.log(`▶️ Segment ${i + 1} started`)
-          }).catch(reject)
+          audio.play().catch(reject)
         })
         
         // Pause minimale entre les segments pour fluidité
         if (i < segments.length - 1) {
-          console.log(`⏸️ Pause before segment ${i + 2}`)
           await new Promise(resolve => setTimeout(resolve, 50))
         }
       }
       
-      console.log(`🎉 All ${segments.length} segments completed successfully`)
       setIsPlaying(false)
       setSpeechSynthesis(null)
+      audioElementsRef.current = []
+      abortControllerRef.current = null
+      // Nettoyer la référence d'auto-play après lecture complète
+      autoPlayTriggeredRef.current = null
       // Reprendre l'écoute vocale après tous les segments
       resumeVoiceRecognition?.()
       
     } catch (err) {
-      console.error('Error playing audio segments:', err)
-      console.log(`❌ Playback stopped at segment during error`)
+      if (err instanceof Error && err.message === 'Playback aborted') {
+        // Playback stopped by user
+      } else {
+        console.error('Error playing audio segments:', err)
+      }
       setIsPlaying(false)
       setSpeechSynthesis(null)
+      audioElementsRef.current = []
+      abortControllerRef.current = null
+      // Nettoyer la référence d'auto-play en cas d'erreur
+      autoPlayTriggeredRef.current = null
       // Reprendre l'écoute vocale en cas d'erreur
       resumeVoiceRecognition?.()
     }
@@ -373,6 +432,11 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
 
   const playAudioWithBrowser = async (text: string) => {
     try {
+      // Double vérification avant de démarrer
+      if (isPlaying) {
+        return
+      }
+      
       // Nettoyer le texte côté backend même pour le navigateur
       const response = await fetch('/speech/clean', {
         method: 'POST',
@@ -407,38 +471,77 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
         utterance.voice = bestVoice
       }
       
-      utterance.onstart = () => setIsPlaying(true)
+      utterance.onstart = () => {
+        setIsPlaying(true)
+      }
       utterance.onend = () => {
         setIsPlaying(false)
         setSpeechSynthesis(null)
+        // Nettoyer la référence d'auto-play après lecture complète
+        autoPlayTriggeredRef.current = null
         // Reprendre l'écoute vocale après la lecture navigateur
         resumeVoiceRecognition?.()
       }
-      utterance.onerror = () => {
+      utterance.onerror = (event) => {
+        console.error('Browser speech error:', event)
         setIsPlaying(false)
         setSpeechSynthesis(null)
+        // Nettoyer la référence d'auto-play en cas d'erreur
+        autoPlayTriggeredRef.current = null
         // Reprendre l'écoute vocale en cas d'erreur
         resumeVoiceRecognition?.()
       }
       
       setSpeechSynthesis(utterance)
-      window.speechSynthesis.speak(utterance)
       setIsPlaying(true)
+      window.speechSynthesis.speak(utterance)
     } catch (err) {
       console.error('Browser speech error:', err)
       setIsPlaying(false)
       setSpeechSynthesis(null)
+      // Nettoyer la référence d'auto-play en cas d'erreur
+      autoPlayTriggeredRef.current = null
       // Reprendre l'écoute vocale en cas d'erreur
       resumeVoiceRecognition?.()
     }
   }
 
   const stopAudio = () => {
+    // Marquer que c'est un arrêt manuel pour éviter le fallback
+    isManualStopRef.current = true
+    
+    // Arrêter la synthèse vocale du navigateur
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel()
     }
+    
+    // Arrêter tous les éléments audio Azure Speech
+    audioElementsRef.current.forEach((audio, index) => {
+      try {
+        audio.pause()
+        audio.currentTime = 0
+        audio.src = '' // Force cleanup
+      } catch (err) {
+        console.error(`Error stopping audio segment ${index + 1}:`, err)
+      }
+    })
+    
+    // Annuler la lecture en cours via AbortController
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    
+    // Nettoyer les états
     setIsPlaying(false)
     setSpeechSynthesis(null)
+    audioElementsRef.current = []
+    
+    // Réinitialiser la référence d'auto-play pour permettre une nouvelle lecture
+    if (answer.message_id && autoPlayTriggeredRef.current === answer.message_id) {
+      autoPlayTriggeredRef.current = null
+    }
+    
     // Reprendre l'écoute vocale si arrêt manuel
     resumeVoiceRecognition?.()
   }
@@ -453,6 +556,12 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
 
   const toggleAutoAudio = () => {
     const newState = !appStateContext?.state.isAutoAudioEnabled
+    
+    // Si on désactive l'auto-lecture ET qu'une lecture est en cours, l'arrêter
+    if (!newState && isPlaying) {
+      stopAudio()
+    }
+    
     appStateContext?.dispatch({
       type: 'TOGGLE_AUTO_AUDIO',
       payload: newState
