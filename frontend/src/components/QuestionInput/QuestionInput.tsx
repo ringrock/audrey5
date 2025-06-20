@@ -29,6 +29,9 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const [historyIndex, setHistoryIndex] = useState<number>(-1)
   const [tempQuestion, setTempQuestion] = useState<string>('')
   
+  // Drag & drop state
+  const [isDragging, setIsDragging] = useState<boolean>(false)
+  
   const autoSendTimeoutRef = useRef<number | null>(null)
 
   const appStateContext = useContext(AppStateContext)
@@ -247,6 +250,79 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
     }
   }
 
+  // Gestionnaires pour le drag & drop d'images
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Vérifier si les images sont supportées par le provider actuel
+    if (!supportsImages) {
+      return
+    }
+    
+    // Vérifier si l'élément glissé contient des fichiers
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Ne désactiver le dragging que si on quitte vraiment la zone (pas un élément enfant)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false)
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    
+    // Vérifier si les images sont supportées par le provider actuel
+    if (!supportsImages) {
+      alert(`Les images ne sont pas supportées par ${currentProvider}. Veuillez changer de fournisseur pour utiliser cette fonctionnalité.`)
+      return
+    }
+    
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    
+    const file = files[0] // Prendre seulement le premier fichier
+    
+    try {
+      console.log('File dropped:', file.name, file.type, file.size)
+      
+      // Réinitialiser les états précédents
+      setBase64Image(null)
+      
+      // Seules les images sont autorisées
+      if (file.type.startsWith('image/')) {
+        console.log('Processing dropped image file...')
+        try {
+          await convertToBase64(file)
+          console.log('Dropped image processing completed successfully')
+        } catch (conversionError) {
+          console.error('Dropped image conversion failed:', conversionError)
+          alert('Erreur lors du traitement de l\'image. Veuillez réessayer.')
+        }
+      } else {
+        console.log('Non-image file dropped, rejecting...')
+        alert('Seules les images sont supportées.')
+      }
+    } catch (error) {
+      console.error('Error in handleDrop:', error)
+      alert('Erreur lors du traitement du fichier. Veuillez réessayer.')
+    }
+  }
+
   const convertToBase64 = async (file: Blob) => {
     return new Promise<void>((resolve, reject) => {
       try {
@@ -430,7 +506,14 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const disableRequiredAccessControl = false
 
   return (
-    <Stack horizontal className={styles.questionInputContainer}>
+    <Stack 
+      horizontal 
+      className={`${styles.questionInputContainer} ${isDragging ? styles.dragging : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <TextField
         className={styles.questionInputTextArea}
         placeholder={placeholder}
@@ -445,6 +528,13 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         onKeyDown={onEnterPress}
         onPaste={onPaste}
       />
+      {isDragging && supportsImages && (
+        <div className={styles.dragOverlay}>
+          <div className={styles.dragMessage}>
+            📷 Déposez votre image ici
+          </div>
+        </div>
+      )}
       <div className={styles.fileInputContainer}>
         <input
           type="file"
