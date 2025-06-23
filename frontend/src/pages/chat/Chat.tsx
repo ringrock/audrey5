@@ -957,21 +957,27 @@ const Chat = () => {
 
   // Fonction pour extraire l'image de la question précédente
   const getQuestionImageForAnswer = (answerIndex: number): string | undefined => {
-    // La question précédente est à l'index answerIndex - 1
-    const questionMessage = messages[answerIndex - 1]
+    let userMessagesChecked = 0
+    const maxUserMessagesToCheck = 5
     
-    if (!questionMessage || questionMessage.role !== 'user') {
-      return undefined
-    }
-    
-    // Vérifier si le contenu est un tableau (multimodal avec image)
-    if (Array.isArray(questionMessage.content)) {
-      const imageContent = questionMessage.content.find(
-        (content) => content.type === 'image_url'
-      )
+    // Remonter les messages depuis l'index de la réponse vers le début
+    for (let i = answerIndex - 1; i >= 0 && userMessagesChecked < maxUserMessagesToCheck; i--) {
+      const message = messages[i]
       
-      if (imageContent && 'image_url' in imageContent) {
-        return imageContent.image_url.url
+      // Ne traiter que les messages de type 'user'
+      if (message.role === 'user') {
+        userMessagesChecked++
+        
+        // Vérifier si le contenu est un tableau (multimodal avec image)
+        if (Array.isArray(message.content)) {
+          const imageContent = message.content.find(
+            (content) => content.type === 'image_url'
+          )
+          
+          if (imageContent && 'image_url' in imageContent) {
+            return imageContent.image_url.url
+          }
+        }
       }
     }
     
