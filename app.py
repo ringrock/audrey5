@@ -77,11 +77,14 @@ def create_app():
 
 @bp.route("/")
 async def index():
-    return await render_template(
+    response = await make_response(await render_template(
         "index.html",
         title=app_settings.ui.title,
         favicon=app_settings.ui.favicon
-    )
+    ))
+    # Allow microphone access in iframe
+    response.headers['Permissions-Policy'] = 'microphone=*'
+    return response
 
 
 @bp.route("/favicon.ico")
@@ -137,6 +140,7 @@ frontend_settings = {
     "azure_speech_enabled": app_settings.base_settings.azure_speech_enabled,
     "azure_speech_voice_fr": app_settings.base_settings.azure_speech_voice_fr,
     "azure_speech_voice_en": app_settings.base_settings.azure_speech_voice_en,
+    "image_max_size_mb": app_settings.base_settings.image_max_size_mb,
 }
 
 
