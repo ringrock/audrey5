@@ -374,3 +374,51 @@ CITATION_CONTENT_MAX_LENGTH=2000
 ```
 
 This setting controls how much text is displayed when users click on citations in the sidebar panel. The default value of 1000 characters can be adjusted based on user needs.
+
+## Image Handling and Storage
+
+The application includes automatic image compression for storage optimization in CosmosDB.
+
+### Image Upload and Processing
+
+When users upload images in the chat interface:
+
+1. **Frontend Processing**: Images are encoded as data URLs and included in multimodal message content
+2. **Backend Storage**: Images are automatically compressed before being stored in CosmosDB to respect the 2MB document limit
+3. **History Retrieval**: Compressed images (thumbnails) are displayed in chat history
+
+### Image Compression Features
+
+#### Automatic Compression (`backend/utils.py`)
+
+- **`compress_image_for_storage()`**: Compresses images to a maximum of 300KB
+- **`process_message_content_for_storage()`**: Processes message content to detect and compress images
+
+#### Compression Algorithm
+
+1. **Size Check**: If image is already ≤300KB, returns unchanged
+2. **Format Conversion**: Converts to RGB/JPEG for optimal compression
+3. **Quality Reduction**: Tries different JPEG quality levels (85% down to 25%)
+4. **Dimension Scaling**: Reduces image dimensions if needed
+5. **Minimum Size**: Ensures images don't become smaller than 50x50 pixels
+
+#### Implementation
+
+```python
+# Messages with images are automatically processed before CosmosDB storage
+processed_content = process_message_content_for_storage(input_message['content'])
+```
+
+#### Benefits
+
+- **Storage Efficiency**: Prevents CosmosDB "Request size is too large" errors
+- **Performance**: Faster chat history loading with smaller images
+- **User Experience**: Maintains visual context while optimizing storage
+- **Cost Optimization**: Reduces CosmosDB storage and bandwidth costs
+
+#### Technical Details
+
+- Uses PIL (Pillow) for image processing
+- Maintains aspect ratio during compression
+- Preserves image quality while meeting size constraints
+- Graceful fallback: Returns original image if compression fails

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos import exceptions
+from backend.utils import process_message_content_for_storage
   
 class CosmosConversationClient():
     
@@ -128,6 +129,9 @@ class CosmosConversationClient():
             return conversations[0]
  
     async def create_message(self, uuid, conversation_id, user_id, input_message: dict):
+        # Traiter le contenu pour compresser les images avant stockage
+        processed_content = process_message_content_for_storage(input_message['content'])
+        
         message = {
             'id': uuid,
             'type': 'message',
@@ -136,7 +140,7 @@ class CosmosConversationClient():
             'updatedAt': datetime.utcnow().isoformat(),
             'conversationId' : conversation_id,
             'role': input_message['role'],
-            'content': input_message['content']
+            'content': processed_content
         }
 
         if self.enable_message_feedback:

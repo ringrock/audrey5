@@ -279,3 +279,135 @@ def comma_separated_string_to_list(s: str) -> List[str]:
     '''
     return s.strip().replace(' ', '').split(',')
 
+
+def compress_image_for_storage(image_data_url: str, max_size_kb: int = 300) -> str:
+    """
+    Compresse une image encodée en data URL pour qu'elle ne dépasse pas la taille maximale spécifiée.
+    
+    Args:
+        image_data_url (str): L'image au format data:image/...;base64,...
+        max_size_kb (int): Taille maximale en KB (défaut: 300KB)
+        
+    Returns:
+        str: L'image compressée au format data URL
+    """
+    try:
+        import base64
+        import io
+        from PIL import Image
+        
+        # Extraire le format et les données base64
+        if not image_data_url.startswith('data:image/'):
+            return image_data_url
+            
+        # Séparer le header du data
+        header, base64_data = image_data_url.split(',', 1)
+        
+        # Décoder l'image
+        image_bytes = base64.b64decode(base64_data)
+        
+        # Calculer la taille actuelle
+        current_size_kb = len(image_bytes) / 1024
+        
+        # Si l'image est déjà assez petite, la retourner telle quelle
+        if current_size_kb <= max_size_kb:
+            return image_data_url
+            
+        logging.info(f"Compression d'image: taille actuelle {current_size_kb:.1f}KB, cible {max_size_kb}KB")
+        
+        # Ouvrir l'image avec PIL
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        # Convertir en RGB si nécessaire (pour JPEG)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            # Créer un fond blanc pour les images avec transparence
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+            img = background
+        
+        # Calculer le ratio de compression nécessaire
+        compression_ratio = max_size_kb / current_size_kb
+        
+        # Réduire la taille de l'image
+        if compression_ratio < 0.8:  # Si on doit beaucoup compresser, réduire aussi les dimensions
+            scale_factor = min(0.8, compression_ratio ** 0.5)
+            new_width = int(img.width * scale_factor)
+            new_height = int(img.height * scale_factor)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            logging.info(f"Redimensionnement: {img.width}x{img.height} -> {new_width}x{new_height}")
+        
+        # Essayer différents niveaux de qualité JPEG
+        for quality in [85, 75, 65, 55, 45, 35, 25]:
+            output_buffer = io.BytesIO()
+            
+            # Sauvegarder en JPEG avec la qualité spécifiée
+            img.save(output_buffer, format='JPEG', quality=quality, optimize=True)
+            compressed_bytes = output_buffer.getvalue()
+            compressed_size_kb = len(compressed_bytes) / 1024
+            
+            if compressed_size_kb <= max_size_kb:
+                # Encoder en base64 et recréer la data URL
+                compressed_base64 = base64.b64encode(compressed_bytes).decode('utf-8')
+                compressed_data_url = f"data:image/jpeg;base64,{compressed_base64}"
+                
+                logging.info(f"Image compressée: {current_size_kb:.1f}KB -> {compressed_size_kb:.1f}KB (qualité {quality})")
+                return compressed_data_url
+        
+        # Si même avec la qualité minimale on dépasse encore, réduire davantage les dimensions
+        while True:
+            img = img.resize((int(img.width * 0.9), int(img.height * 0.9)), Image.Resampling.LANCZOS)
+            output_buffer = io.BytesIO()
+            img.save(output_buffer, format='JPEG', quality=25, optimize=True)
+            compressed_bytes = output_buffer.getvalue()
+            compressed_size_kb = len(compressed_bytes) / 1024
+            
+            if compressed_size_kb <= max_size_kb or img.width < 50 or img.height < 50:
+                compressed_base64 = base64.b64encode(compressed_bytes).decode('utf-8')
+                compressed_data_url = f"data:image/jpeg;base64,{compressed_base64}"
+                
+                logging.info(f"Image compressée (redimensionnée): {current_size_kb:.1f}KB -> {compressed_size_kb:.1f}KB")
+                return compressed_data_url
+                
+    except Exception as e:
+        logging.error(f"Erreur lors de la compression d'image: {e}")
+        # En cas d'erreur, retourner l'image originale
+        return image_data_url
+
+
+def process_message_content_for_storage(content):
+    """
+    Traite le contenu d'un message pour compresser les images avant stockage.
+    
+    Args:
+        content: Le contenu du message (string ou array multimodal)
+        
+    Returns:
+        Le contenu traité avec les images compressées
+    """
+    if isinstance(content, str):
+        return content
+    
+    if isinstance(content, list):
+        processed_content = []
+        for item in content:
+            if isinstance(item, dict) and item.get('type') == 'image_url':
+                # Compresser l'image
+                original_url = item['image_url']['url']
+                compressed_url = compress_image_for_storage(original_url, max_size_kb=300)
+                
+                processed_item = {
+                    'type': 'image_url',
+                    'image_url': {
+                        'url': compressed_url
+                    }
+                }
+                processed_content.append(processed_item)
+            else:
+                processed_content.append(item)
+        
+        return processed_content
+    
+    return content
+
