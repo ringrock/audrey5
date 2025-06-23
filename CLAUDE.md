@@ -375,17 +375,60 @@ CITATION_CONTENT_MAX_LENGTH=2000
 
 This setting controls how much text is displayed when users click on citations in the sidebar panel. The default value of 1000 characters can be adjusted based on user needs.
 
+### Image Upload Configuration
+
+The application includes configurable limits for image uploads with user-friendly error handling:
+
+```env
+# Image Upload Configuration
+# Maximum image size in megabytes (default: 10.0)
+IMAGE_MAX_SIZE_MB=12.0
+```
+
+#### Features
+- **Global size limit**: Configurable via environment variable, applies to all upload methods
+- **Multiple upload methods supported**: File input, drag & drop, clipboard paste
+- **Clean error display**: Integrated UI error messages replace JavaScript alerts
+- **Provider compatibility**: Only enabled for LLM providers that support images (Claude, Gemini, OpenAI Direct)
+- **Smart error handling**: Specific messages show the configured size limit from environment
+
+#### Error Display
+When an image exceeds the size limit, users see a clean error message above the input field:
+- **Format**: "Image trop volumineuse (limite XMB). Veuillez utiliser une image plus petite."
+- **Design**: Red-themed error banner with icon and close button
+- **Animation**: Smooth slide-down appearance with animation
+- **Dismissible**: Users can close the error by clicking the X button
+
+#### Technical Implementation
+- Frontend validation uses the limit from `/frontend_settings` API endpoint
+- Backend serves the configuration via `app_settings.base_settings.image_max_size_mb`
+- Error messages propagate from `convertToBase64` through all upload handlers
+- Dual-path processing: original images for LLMs, compressed versions for CosmosDB storage
+
 ## Image Handling and Storage
 
-The application includes automatic image compression for storage optimization in CosmosDB.
+The application includes comprehensive image upload validation and automatic compression for storage optimization.
 
-### Image Upload and Processing
+### Image Upload Configuration and Validation
+
+#### Upload Size Limits
+- **Global Limit**: Configurable via `IMAGE_MAX_SIZE_MB` environment variable (default: 10MB)
+- **Frontend Validation**: Images are validated before processing to ensure they don't exceed the configured limit
+- **User-Friendly Errors**: Clear error messages inform users of size limits when exceeded
+
+#### Upload Methods Supported
+1. **File Selection**: Click to browse and select image files
+2. **Drag & Drop**: Drag images directly into the chat input area
+3. **Paste**: Paste images from clipboard (Ctrl+V)
+
+### Image Processing Pipeline
 
 When users upload images in the chat interface:
 
-1. **Frontend Processing**: Images are encoded as data URLs and included in multimodal message content
-2. **Backend Storage**: Images are automatically compressed before being stored in CosmosDB to respect the 2MB document limit
-3. **History Retrieval**: Compressed images (thumbnails) are displayed in chat history
+1. **Frontend Validation**: Size validation against configured limit with immediate user feedback
+2. **LLM Processing**: Original high-quality images are sent to LLM providers for analysis
+3. **Backend Storage**: Images are automatically compressed before being stored in CosmosDB to respect the 2MB document limit
+4. **History Retrieval**: Compressed images (thumbnails) are displayed in chat history
 
 ### Image Compression Features
 
@@ -411,9 +454,11 @@ processed_content = process_message_content_for_storage(input_message['content']
 
 #### Benefits
 
+- **Upload Control**: Prevents oversized uploads with configurable limits and clear user feedback
 - **Storage Efficiency**: Prevents CosmosDB "Request size is too large" errors
-- **Performance**: Faster chat history loading with smaller images
-- **User Experience**: Maintains visual context while optimizing storage
+- **LLM Performance**: Original images sent to LLM providers for optimal analysis quality
+- **Performance**: Faster chat history loading with compressed thumbnails
+- **User Experience**: Clear error messages and maintained visual context
 - **Cost Optimization**: Reduces CosmosDB storage and bandwidth costs
 
 #### Technical Details

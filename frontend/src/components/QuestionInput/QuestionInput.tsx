@@ -23,6 +23,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const [isUploading, setIsUploading] = useState<boolean>(false)
   const [userTypedQuestion, setUserTypedQuestion] = useState<string>('')
   const [isInitialQuestionSet, setIsInitialQuestionSet] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   
   // History management for arrow key navigation
   const [history, setHistory] = useState<string[]>([])
@@ -42,6 +43,9 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
   const wakeWordEnabled = appStateContext?.state.frontendSettings?.wake_word_enabled ?? true
   const wakeWordPhrases = appStateContext?.state.frontendSettings?.wake_word_phrases ?? ['asmi', 'askme', 'askmi', 'asqmi']
   const wakeWordVariants = appStateContext?.state.frontendSettings?.wake_word_variants ?? {}
+  
+  // Configuration pour les images
+  const imageMaxSizeMb = appStateContext?.state.frontendSettings?.image_max_size_mb ?? 10.0
   
   // Use voice recognition hook
   const voiceRecognition = useVoiceRecognition({
@@ -185,7 +189,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             .catch((error) => {
               console.error('Erreur lors du traitement de l\'image du presse-papier:', error)
               if (error instanceof Error) {
-                alert(error.message)
+                setErrorMessage(error.message)
               }
             })
         }
@@ -234,7 +238,11 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             console.log('Image processing completed successfully')
           } catch (conversionError) {
             console.error('Image conversion failed:', conversionError)
-            alert('Erreur lors du traitement de l\'image. Veuillez réessayer.')
+            if (conversionError instanceof Error) {
+              setErrorMessage(conversionError.message)
+            } else {
+              setErrorMessage('Erreur lors du traitement de l\'image. Veuillez réessayer.')
+            }
           }
         } else {
           console.log('Non-image file selected, skipping...')
@@ -246,7 +254,11 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       }
     } catch (error) {
       console.error('Error in handleFileUpload:', error)
-      alert('Erreur lors du téléchargement du fichier. Veuillez réessayer.')
+      if (error instanceof Error) {
+        setErrorMessage(error.message)
+      } else {
+        setErrorMessage('Erreur lors du téléchargement du fichier. Veuillez réessayer.')
+      }
     }
   }
 
@@ -311,7 +323,11 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
           console.log('Dropped image processing completed successfully')
         } catch (conversionError) {
           console.error('Dropped image conversion failed:', conversionError)
-          alert('Erreur lors du traitement de l\'image. Veuillez réessayer.')
+          if (conversionError instanceof Error) {
+            setErrorMessage(conversionError.message)
+          } else {
+            setErrorMessage('Erreur lors du traitement de l\'image. Veuillez réessayer.')
+          }
         }
       } else {
         console.log('Non-image file dropped, rejecting...')
@@ -319,7 +335,11 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       }
     } catch (error) {
       console.error('Error in handleDrop:', error)
-      alert('Erreur lors du traitement du fichier. Veuillez réessayer.')
+      if (error instanceof Error) {
+        setErrorMessage(error.message)
+      } else {
+        setErrorMessage('Erreur lors du traitement du fichier. Veuillez réessayer.')
+      }
     }
   }
 
@@ -328,10 +348,13 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       try {
         console.log('convertToBase64 called with file:', file.size, 'bytes')
         
-        // Limite de sécurité : 20MB (limite générale raisonnable)
-        if (file.size > 20 * 1024 * 1024) {
-          console.error('File too large:', file.size)
-          reject(new Error('Image trop volumineuse (limite 20MB). Veuillez utiliser une image plus petite.'))
+        // Vérification de la taille d'image selon la configuration backend
+        const maxSizeBytes = imageMaxSizeMb * 1024 * 1024
+        if (file.size > maxSizeBytes) {
+          console.error('File too large:', file.size, 'bytes, limit:', maxSizeBytes)
+          const errorMsg = `Image trop volumineuse (limite ${imageMaxSizeMb}MB). Veuillez utiliser une image plus petite.`
+          setErrorMessage(errorMsg)
+          reject(new Error(errorMsg))
           return
         }
         
@@ -629,6 +652,22 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
           <img src={Send} className={styles.questionInputSendButton} alt="Send Button" />
         )}
       </div>
+      {errorMessage && (
+        <div className={styles.errorContainer}>
+          <div className={styles.errorMessage}>
+            <FontIcon iconName="ErrorBadge" className={styles.errorIcon} />
+            <span>{errorMessage}</span>
+            <button 
+              className={styles.errorCloseButton}
+              onClick={() => setErrorMessage(null)}
+              aria-label="Fermer le message d'erreur"
+              title="Fermer"
+            >
+              <FontIcon iconName="Cancel" />
+            </button>
+          </div>
+        </div>
+      )}
       <div className={styles.questionInputBottomBorder} />
     </Stack>
   )

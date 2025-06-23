@@ -919,6 +919,9 @@ class _BaseSettings(BaseSettings):
     wake_word_phrases: Optional[List[str]] = ["asmi", "askme", "askmi", "asqmi"]  # Wake word phrases
     wake_word_variants: Optional[str] = None  # Wake word phonetic variants (format: word|variant1|variant2,word2|variant3)
     
+    # Image Upload Configuration
+    image_max_size_mb: float = 10.0  # Maximum image size in MB for upload
+    
     # Azure Speech Services Configuration
     azure_speech_enabled: bool = False  # Enable Azure Speech Services for TTS
     azure_speech_key: Optional[str] = None  # Azure Speech Services API key
