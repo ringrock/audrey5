@@ -273,6 +273,7 @@ WAKE_WORD_PHRASES=["Patrick", "AskMe", "AskMi", "AsMi"]
 - Double-click microphone to activate continuous listening
 - System listens for wake words: "Patrick", "AskMe", "AskMi", "AsMi"
 - Say wake word followed by question: "Patrick, résume-moi la charte informatique"
+- **Visual Feedback**: Red blinking dot appears instantly on microphone icon when wake word is detected
 - Remains active between conversations for hands-free operation
 - Double-click again or single-click during listening to deactivate
 
@@ -280,6 +281,7 @@ WAKE_WORD_PHRASES=["Patrick", "AskMe", "AskMi", "AsMi"]
 - Automatically pauses during text-to-speech playback to prevent audio feedback
 - Seamlessly resumes wake word mode after audio playback (if it was active before)
 - Compatible with both Azure Speech and browser-based speech synthesis
+- **Instant Visual Response**: Wake word indicator activates on interim speech results for immediate user feedback
 
 ### Text-to-Speech (Voice Output)
 
@@ -578,6 +580,21 @@ L'application AskMe supporte un système de commandes qui permet aux utilisateur
 - `llm_provider` : Provider LLM sélectionné
 - `documents_count` : Nombre de documents de référence
 - `response_length` : Type de longueur de réponse
+
+### Commandes Multiples
+
+Le système supporte l'exécution de **commandes multiples** dans une seule phrase, permettant de modifier plusieurs paramètres en une fois :
+
+**Exemples de commandes multiples :**
+- `Modifie la config pour utiliser claude avec des réponses courtes et 5 documents max`
+- `Passe sur gemini avec réponses détaillées et 15 documents de référence`
+- `Utilise mistral des réponses moyennes et 3 documents maxi`
+
+**Fonctionnalités :**
+- **Traitement intelligent** : Le système détecte et exécute automatiquement toutes les commandes trouvées dans le message
+- **Réponse unifiée** : Une seule réponse de confirmation résume tous les changements effectués
+- **Support nombres écrits** : Reconnaissance des nombres en lettres ("trois documents") pour une meilleure compatibilité vocale
+- **Prévention des doublons** : Évite les messages de confirmation répétés grâce à un traitement centralisé
 
 ### Gestion des Erreurs
 

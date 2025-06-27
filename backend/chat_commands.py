@@ -41,7 +41,9 @@ class ChatCommandParser:
         self.llm_providers = {
             'azure': 'AZURE_OPENAI',
             'azure openai': 'AZURE_OPENAI',
-            'openai': 'AZURE_OPENAI',
+            'open ai': 'OPENAI_DIRECT',
+            'open a i': 'OPENAI_DIRECT',
+            'chat gpt': 'OPENAI_DIRECT',
             'claude': 'CLAUDE',
             'anthropic': 'CLAUDE',
             'openai direct': 'OPENAI_DIRECT',
@@ -101,9 +103,9 @@ class ChatCommandParser:
             re.IGNORECASE
         )
         
-        # Pattern pour nombre de documents
+        # Pattern pour nombre de documents (nombres en chiffres ET en lettres)
         self.docs_pattern = re.compile(
-            r'(?:modifie|change|utilise|passe|met|récupère?|et).*?(?:config|configuration)?.*?(?:pour )?(?:récupérer?|avoir|utiliser|prendre)?.*?(\d+).*?(?:doc|document|référence)',
+            r'(?:modifie|change|utilise|passe|met|récupère?|et).*?(?:config|configuration)?.*?(?:pour )?(?:récupérer?|avoir|utiliser|prendre)?.*?(\d+|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|quinze|vingt).*?(?:doc|document|référence)',
             re.IGNORECASE
         )
         
@@ -201,19 +203,44 @@ class ChatCommandParser:
         return None
     
     def _try_parse_documents_count(self, text: str) -> Optional[ChatCommand]:
-        """Tente de parser une commande de modification du nombre de documents"""
+        """
+        Tente de parser une commande de modification du nombre de documents
+        
+        Supporte les nombres en chiffres (1, 2, 3...) et en lettres (un, deux, trois...)
+        pour une meilleure reconnaissance vocale.
+        
+        Args:
+            text: Le texte à analyser
+            
+        Returns:
+            ChatCommand avec le nombre de documents ou None si non trouvé
+        """
         match = self.docs_pattern.search(text)
         if match:
+            number_text = match.group(1).lower()
+            
+            # Dictionnaire pour convertir les mots en nombres (reconnaissance vocale)
+            word_to_number = {
+                'un': 1, 'une': 1, 'deux': 2, 'trois': 3, 'quatre': 4, 'cinq': 5,
+                'six': 6, 'sept': 7, 'huit': 8, 'neuf': 9, 'dix': 10,
+                'quinze': 15, 'vingt': 20
+            }
+            
             try:
-                count = int(match.group(1))
-                return ChatCommand(
-                    command_type=CommandType.SET_DOCUMENTS_COUNT,
-                    parameters={'count': count},
-                    original_text=text,
-                    confidence=0.9
-                )
+                # Essayer de convertir directement en nombre (chiffres)
+                count = int(number_text)
             except ValueError:
-                pass
+                # Si ce n'est pas un nombre, chercher dans le dictionnaire (lettres)
+                count = word_to_number.get(number_text)
+                if count is None:
+                    return None
+            
+            return ChatCommand(
+                command_type=CommandType.SET_DOCUMENTS_COUNT,
+                parameters={'count': count},
+                original_text=text,
+                confidence=0.9
+            )
         return None
     
     def _try_parse_response_length(self, text: str) -> Optional[ChatCommand]:
@@ -320,9 +347,8 @@ class ChatCommandExecutor:
                 'command_type': 'multiple_commands'
             }
         
-        # Combiner les messages de succès en une seule réponse
-        messages = [r['message'] for r in successful_commands if r.get('message')]
-        combined_message = ' '.join(messages)
+        # Créer un message intelligent combiné
+        combined_message = self._create_intelligent_message(successful_commands, user_session)
         
         # Construire la réponse finale
         result = {
@@ -338,6 +364,60 @@ class ChatCommandExecutor:
             result['action'] = combined_actions[0]
         
         return result
+
+    def _create_intelligent_message(self, successful_commands: List[Dict[str, Any]], user_session: Dict[str, Any]) -> str:
+        """
+        Crée un message intelligent combiné pour plusieurs commandes
+        
+        Args:
+            successful_commands: Liste des commandes qui ont réussi
+            user_session: Session utilisateur avec les paramètres mis à jour
+            
+        Returns:
+            Message combiné intelligent
+        """
+        if len(successful_commands) == 1:
+            # Une seule commande, retourner le message original
+            return successful_commands[0].get('message', 'Commande exécutée avec succès.')
+        
+        # Analyser les types de commandes exécutées
+        command_types = [cmd.get('command_type') for cmd in successful_commands]
+        changes = []
+        
+        # Construire la liste des changements en utilisant les données de retour des commandes
+        for cmd in successful_commands:
+            cmd_type = cmd.get('command_type')
+            
+            if cmd_type == 'change_llm' and 'provider' in cmd:
+                provider_name = cmd.get('provider_name', cmd.get('provider', 'inconnu'))
+                changes.append(f"modèle {provider_name}")
+            
+            elif cmd_type == 'set_response_length' and 'response_length' in cmd:
+                length_mapping = {
+                    'VERY_SHORT': 'courtes',
+                    'NORMAL': 'normales', 
+                    'COMPREHENSIVE': 'détaillées'
+                }
+                length_desc = length_mapping.get(cmd['response_length'], 'personnalisées')
+                changes.append(f"réponses {length_desc}")
+            
+            elif cmd_type == 'set_documents_count' and 'documents_count' in cmd:
+                doc_count = cmd['documents_count']
+                changes.append(f"{doc_count} documents maximum")
+        
+        # Construire le message final
+        if changes:
+            if len(changes) == 1:
+                return f"Configuration modifiée avec succès : {changes[0]}."
+            elif len(changes) == 2:
+                return f"Configuration modifiée avec succès : {changes[0]} et {changes[1]}."
+            else:
+                # Plus de 2 changements
+                last_change = changes.pop()
+                return f"Configuration modifiée avec succès : {', '.join(changes)} et {last_change}."
+        
+        # Fallback si on n'arrive pas à parser
+        return "Configuration modifiée avec succès."
 
     async def execute_command(self, command: ChatCommand, user_session: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -404,6 +484,7 @@ class ChatCommandExecutor:
             'message': f"Configuration modifiée avec succès. Le modèle {provider_name} est maintenant utilisé.",
             'command_type': CommandType.CHANGE_LLM.value,
             'provider': provider,
+            'provider_name': provider_name,
             'user_session': user_session
         }
     

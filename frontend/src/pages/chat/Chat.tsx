@@ -656,7 +656,8 @@ const Chat = () => {
                   
                   // Vérifier si c'est une réponse de commande
                   if (result.command_result) {
-                    processCommandResult(result, userMessage, conversationId)
+                    // Skip processing in streaming section for commands - will be handled in non-streaming
+                    // to avoid duplicate processing
                   } else {
                     result.choices[0].messages.forEach(resultObj => {
                       processResultMessage(resultObj, userMessage, conversationId)
