@@ -129,7 +129,8 @@ class CosmosConversationClient():
             return conversations[0]
  
     async def create_message(self, uuid, conversation_id, user_id, input_message: dict):
-        # Traiter le contenu pour compresser les images avant stockage
+        # Pour le stockage CosmosDB : compresser les images pour éviter les erreurs de taille
+        # (Les LLM reçoivent toujours les images originales haute qualité)
         processed_content = process_message_content_for_storage(input_message['content'])
         
         message = {

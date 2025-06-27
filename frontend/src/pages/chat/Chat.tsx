@@ -288,6 +288,90 @@ const Chat = () => {
     }
   }
 
+  // Nouvelle fonction pour traiter les résultats de commandes
+  const processCommandResult = (result: any, userMessage: ChatMessage, conversationId?: string) => {
+    // Gérer les actions spéciales en appelant les fonctions existantes des boutons
+    if (result.command_result?.action === 'new_conversation') {
+      // Appeler la même fonction que le bouton "+"
+      // Délai court pour laisser les états se stabiliser avant newChat
+      setTimeout(() => {
+        newChat()
+      }, 100)
+      return
+    }
+    
+    if (result.command_result?.action === 'clear_conversation') {
+      // Appeler la même fonction que le bouton balai
+      clearChat()
+      return
+    }
+    
+    // Mettre à jour les préférences si la commande a modifié des paramètres
+    if (result.command_result?.user_session) {
+      const session = result.command_result.user_session
+      const currentPreferences = appStateContext?.state.customizationPreferences || {
+        responseSize: 'medium' as const,
+        documentsCount: 5,
+        llmProvider: 'AZURE_OPENAI'
+      }
+      
+      const updatedPreferences = { ...currentPreferences }
+      
+      if (session.llm_provider) {
+        updatedPreferences.llmProvider = session.llm_provider
+      }
+      
+      if (session.documents_count) {
+        updatedPreferences.documentsCount = session.documents_count
+      }
+      
+      if (session.response_length) {
+        // Mapper les valeurs du backend vers les valeurs du frontend
+        const responseMapping: { [key: string]: 'veryShort' | 'medium' | 'comprehensive' } = {
+          'VERY_SHORT': 'veryShort',
+          'NORMAL': 'medium',
+          'COMPREHENSIVE': 'comprehensive'
+        }
+        const mappedSize = responseMapping[session.response_length]
+        if (mappedSize) {
+          updatedPreferences.responseSize = mappedSize
+        }
+      }
+      
+      // Sauvegarder dans localStorage (comme le fait le menu de personnalisation)
+      try {
+        localStorage.setItem('userCustomizationPreferences', JSON.stringify(updatedPreferences))
+      } catch (error) {
+        console.warn('Failed to save customization preferences to localStorage:', error)
+      }
+      
+      // Mettre à jour le state global
+      appStateContext?.dispatch({ 
+        type: 'UPDATE_CUSTOMIZATION_PREFERENCES', 
+        payload: updatedPreferences
+      })
+    }
+    
+    // Traiter le message de réponse normalement, sauf pour les actions qui appellent les fonctions existantes
+    const actionCommands = ['new_conversation', 'clear_conversation']
+    if (!actionCommands.includes(result.command_result?.action)) {
+      if (result.choices && result.choices.length > 0) {
+        result.choices[0].messages.forEach((msg: ChatMessage) => {
+          processResultMessage(msg, userMessage, conversationId)
+        })
+      } else {
+        // Si pas de choices, créer un message de réponse avec le contenu de la commande
+        const commandMsg: ChatMessage = {
+          id: result.id || uuid(),
+          role: 'assistant',
+          content: result.command_result?.message || 'Commande traitée',
+          date: new Date().toISOString()
+        }
+        processResultMessage(commandMsg, userMessage, conversationId)
+      }
+    }
+  }
+
   const getToken = () => {
     return token;
   }
@@ -377,9 +461,15 @@ const Chat = () => {
                   if (result.choices[0].messages?.some(m => m.role === ASSISTANT)) {
                     setShowLoadingMessage(false)
                   }
-                  result.choices[0].messages.forEach(resultObj => {
-                    processResultMessage(resultObj, userMessage, conversationId)
-                  })
+                  
+                  // Vérifier si c'est une réponse de commande
+                  if (result.command_result) {
+                    processCommandResult(result, userMessage, conversationId)
+                  } else {
+                    result.choices[0].messages.forEach(resultObj => {
+                      processResultMessage(resultObj, userMessage, conversationId)
+                    })
+                  }
                 } else if (result.error) {
                   throw Error(result.error)
                 }
@@ -563,9 +653,15 @@ const Chat = () => {
                   if (result.choices[0].messages?.some(m => m.role === ASSISTANT)) {
                     setShowLoadingMessage(false)
                   }
-                  result.choices[0].messages.forEach(resultObj => {
-                    processResultMessage(resultObj, userMessage, conversationId)
-                  })
+                  
+                  // Vérifier si c'est une réponse de commande
+                  if (result.command_result) {
+                    processCommandResult(result, userMessage, conversationId)
+                  } else {
+                    result.choices[0].messages.forEach(resultObj => {
+                      processResultMessage(resultObj, userMessage, conversationId)
+                    })
+                  }
                 }
                 runningText = ''
               } else if (result.error) {
@@ -646,6 +742,15 @@ const Chat = () => {
           }
           resultConversation.messages.push(errorChatMsg)
         } else {
+          // Vérifier si c'est une réponse de commande
+          if (result.command_result) {
+            processCommandResult(result, userMessage, conversationId)
+            setIsLoading(false)
+            setShowLoadingMessage(false)
+            abortFuncs.current = abortFuncs.current.filter(a => a !== abortController)
+            return
+          }
+          
           if (!result.history_metadata) {
             console.error('Error retrieving data.', result)
             let errorChatMsg: ChatMessage = {
@@ -814,8 +919,11 @@ const Chat = () => {
           return
         }
         const noContentError = appStateContext.state.currentChat.messages.find(m => m.role === ERROR)
+        
+        // Vérifier qu'il y a au moins un message d'assistant à sauvegarder
+        const hasAssistantMessage = appStateContext.state.currentChat.messages.some(m => m.role === 'assistant')
 
-        if (!noContentError) {
+        if (!noContentError && hasAssistantMessage) {
           saveToDB(appStateContext.state.currentChat.messages, appStateContext.state.currentChat.id)
             .then(res => {
               if (!res.ok) {

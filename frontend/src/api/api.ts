@@ -10,14 +10,6 @@ export async function conversationApi(
   userFullDefinition: string,
   customizationPreferences?: any
 ): Promise<Response> {
-  // Debug logging pour vérifier la transmission du provider et des paramètres
-  console.log('🤖 LLM Provider utilisé:', customizationPreferences?.llmProvider || 'DEFAULT (AZURE_OPENAI)');
-  console.log('📊 Paramètres envoyés:', {
-    provider: customizationPreferences?.llmProvider,
-    responseSize: customizationPreferences?.responseSize,
-    documentsCount: customizationPreferences?.documentsCount
-  });
-  
   const response = await fetch('/conversation', {
     method: 'POST',
     headers: {
@@ -177,14 +169,6 @@ export const historyGenerate = async (
   convId?: string,
 ): Promise<Response> => {
   let body
-  // Debug logging pour vérifier la transmission du provider et des paramètres
-  console.log('🤖 LLM Provider utilisé (historique):', customizationPreferences?.llmProvider || 'DEFAULT (AZURE_OPENAI)');
-  console.log('📊 Paramètres envoyés (historique):', {
-    provider: customizationPreferences?.llmProvider,
-    responseSize: customizationPreferences?.responseSize,
-    documentsCount: customizationPreferences?.documentsCount
-  });
-  
   if (convId) {
     body = JSON.stringify({
       conversation_id: convId,
