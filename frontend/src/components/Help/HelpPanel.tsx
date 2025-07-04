@@ -444,40 +444,10 @@ export function HelpPanel() {
           <Pivot aria-label="Options d'aide">
 
             <PivotItem 
-              headerText={getTranslation('guideTab')} 
-              headerButtonProps={{
-                'data-order': 1,
-                'data-title': 'Guide'
-              }}
-              itemIcon="ReadingMode"
-            >
-              <div className={styles.tabContent}>
-                {/* Navigation du guide */}
-                <div className={styles.guideNavigation}>
-                  {helpContent.guideContent.map(section => (
-                    <button
-                      key={section.id}
-                      className={`${styles.guideNavButton} ${selectedGuideSection === section.id ? styles.guideNavButtonActive : ''}`}
-                      onClick={() => scrollToGuideSection(section.id)}
-                    >
-                      <Icon iconName={section.icon} className={styles.guideNavButtonIcon} />
-                      {section.title[currentLanguage]}
-                    </button>
-                  ))}
-                </div>
-                
-                {/* Contenu du guide */}
-                <div style={{ overflow: 'auto' }}>
-                  {helpContent.guideContent.map(section => renderGuideSection(section))}
-                </div>
-              </div>
-            </PivotItem>
-            
-            <PivotItem 
               headerText={getTranslation('promptsTab')} 
               headerButtonProps={{
-                'data-order': 2,
-                'data-title': 'Prompts'
+                'data-order': 1,
+                'data-title': 'Requests'
               }}
               itemIcon="BulletedList"
             >
@@ -535,6 +505,36 @@ export function HelpPanel() {
                       />
                     </FocusZone>
                   )}
+                </div>
+              </div>
+            </PivotItem>
+            
+            <PivotItem 
+              headerText={getTranslation('guideTab')} 
+              headerButtonProps={{
+                'data-order': 2,
+                'data-title': 'Guide'
+              }}
+              itemIcon="ReadingMode"
+            >
+              <div className={styles.tabContent}>
+                {/* Navigation du guide */}
+                <div className={styles.guideNavigation}>
+                  {helpContent.guideContent.map(section => (
+                    <button
+                      key={section.id}
+                      className={`${styles.guideNavButton} ${selectedGuideSection === section.id ? styles.guideNavButtonActive : ''}`}
+                      onClick={() => scrollToGuideSection(section.id)}
+                    >
+                      <Icon iconName={section.icon} className={styles.guideNavButtonIcon} />
+                      {section.title[currentLanguage]}
+                    </button>
+                  ))}
+                </div>
+                
+                {/* Contenu du guide */}
+                <div style={{ overflow: 'auto' }}>
+                  {helpContent.guideContent.map(section => renderGuideSection(section))}
                 </div>
               </div>
             </PivotItem>
