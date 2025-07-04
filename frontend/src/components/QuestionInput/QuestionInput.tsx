@@ -640,7 +640,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
         </div>
       )}
       <div
-        className={styles.questionInputSendButtonContainer}
+        className={`${styles.questionInputSendButtonContainer} ${base64Image ? styles.withImage : ''}`}
         role="button"
         tabIndex={0}
         aria-label="Ask question button"
