@@ -11,6 +11,7 @@ interface VoiceRecognitionConfig {
 interface VoiceRecognitionState {
   isListening: boolean
   isWakeWordListening: boolean
+  isListeningAfterWakeWord: boolean
   speechSupported: boolean
   question: string
   voiceInputComplete: boolean
@@ -31,6 +32,7 @@ export const useVoiceRecognition = (
 ): VoiceRecognitionState & VoiceRecognitionActions => {
   const [isListening, setIsListening] = useState<boolean>(false)
   const [isWakeWordListening, setIsWakeWordListening] = useState<boolean>(false)
+  const [isListeningAfterWakeWord, setIsListeningAfterWakeWord] = useState<boolean>(false)
   const [speechSupported, setSpeechSupported] = useState<boolean>(false)
   const [question, setQuestion] = useState<string>('')
   const [voiceInputComplete, setVoiceInputComplete] = useState<boolean>(false)
@@ -82,6 +84,7 @@ export const useVoiceRecognition = (
       recognition.onend = () => {
         console.log('Speech recognition ended')
         setIsListening(false)
+        setIsListeningAfterWakeWord(false) // Désactiver l'indicateur quand l'écoute se termine
         // Force a small delay to ensure state is properly synchronized
         setTimeout(() => {
           if (recognitionRef.current) {
@@ -148,6 +151,12 @@ export const useVoiceRecognition = (
               }
             }
             
+            // Activer l'indicateur dès que le wake word est détecté (même en intermédiaire)
+            // Cela permet d'afficher le point rouge clignotant instantanément
+            if (detectedPhrase) {
+              setIsListeningAfterWakeWord(true)
+            }
+            
             if (detectedPhrase && event.results[i].isFinal) {
               console.log(`Wake word detected! Phrase: "${detectedPhrase}", Variant: "${detectedVariant}"`)
               console.log('Original transcript:', transcript)
@@ -155,6 +164,9 @@ export const useVoiceRecognition = (
               
               wakeWordRecognition.stop()
               setIsWakeWordListening(false)
+              
+              // Activer l'indicateur que le wake word a été détecté et qu'on écoute la commande
+              setIsListeningAfterWakeWord(true)
               
               // Extract question part after wake word
               let questionPart = ''
@@ -188,20 +200,22 @@ export const useVoiceRecognition = (
               if (questionPart && questionPart.length > 0) {
                 setQuestion(questionPart)
                 setVoiceInputComplete(true)
+                // Désactiver l'indicateur car la commande a été reçue
+                setIsListeningAfterWakeWord(false)
               } else {
                 console.log('Wake word detected but no question following, starting normal voice input...')
                 setQuestion('')
-                setTimeout(() => {
-                  if (recognitionRef.current && !isListening) {
-                    try {
-                      setIsListening(true)
-                      recognitionRef.current.start()
-                    } catch (error) {
-                      console.error('Failed to start speech recognition after wake word:', error)
-                      setIsListening(false)
-                    }
+                // Démarrage immédiat de l'écoute après wake word
+                if (recognitionRef.current && !isListening) {
+                  try {
+                    setIsListening(true)
+                    recognitionRef.current.start()
+                  } catch (error) {
+                    console.error('Failed to start speech recognition after wake word:', error)
+                    setIsListening(false)
+                    setIsListeningAfterWakeWord(false)
                   }
-                }, 500)
+                }
               }
               
               break
@@ -461,6 +475,7 @@ export const useVoiceRecognition = (
     console.log('Resetting voice input state...')
     setVoiceInputComplete(false)
     setIsListening(false) // Ensure listening state is clean
+    setIsListeningAfterWakeWord(false) // Reset wake word indicator
     restartWakeWordAfterSend()
   }, [restartWakeWordAfterSend])
 
@@ -552,10 +567,12 @@ export const useVoiceRecognition = (
     }, 800) // Délai principal
   }, [canUseWakeWord, voiceInputEnabled, isListening, isWakeWordListening, wakeWordMode])
 
+
   return {
     // State
     isListening,
     isWakeWordListening,
+    isListeningAfterWakeWord,
     speechSupported,
     question,
     voiceInputComplete,

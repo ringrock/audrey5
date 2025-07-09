@@ -51,10 +51,14 @@ from backend.document_processor import DocumentProcessor
 from backend.llm_providers import LLMProviderFactory
 from backend.speech_services import synthesize_speech_azure, clean_text_for_speech
 from backend.pronunciation_dict import get_pronunciation_dict, add_pronunciation, remove_pronunciation
+from backend.chat_commands import command_parser, ChatCommandExecutor
 
 bp = Blueprint("routes", __name__, static_folder="static", template_folder="static")
 
 cosmos_db_ready = asyncio.Event()
+
+# Dictionnaire global pour stocker les sessions utilisateur
+user_sessions = {}
 
 
 def create_app():
@@ -634,8 +638,71 @@ async def conversation_internal(request_body, request_headers, preventShouldStre
         # LogCallToAiManager(request_body)
         logging.debug(f"conversation_internal: stream={app_settings.azure_openai.stream}, use_promptflow={app_settings.base_settings.use_promptflow}, preventShouldStream={preventShouldStream}")
 
-        # DEBUG: Log incoming messages to see if images are present BEFORE processing
+        # Récupérer l'ID utilisateur pour gérer les sessions
+        class MockRequest:
+            def __init__(self, headers):
+                self.headers = headers
+        mock_request = MockRequest(request_headers)
+        user_id = GetDecryptedUsername(mock_request)
+        if user_id:
+            # Initialiser la session utilisateur si elle n'existe pas
+            if user_id not in user_sessions:
+                user_sessions[user_id] = {}
+        
+        # Vérifier si c'est une commande
         messages = request_body.get("messages", [])
+        if messages:
+            last_message = messages[-1]
+            if last_message.get("role") == "user":
+                content = last_message.get("content", "")
+                
+                # Extraire le texte du contenu (peut être string ou list avec images)
+                text_content = ""
+                if isinstance(content, str):
+                    text_content = content
+                elif isinstance(content, list):
+                    for part in content:
+                        if part.get("type") == "text":
+                            text_content = part.get("text", "")
+                            break
+                
+                # Détecter les commandes
+                if text_content:
+                    commands = command_parser.parse_commands(text_content)
+                    if commands:
+                        # Exécuter les commandes
+                        executor = ChatCommandExecutor(app_settings)
+                        current_session = user_sessions.get(user_id, {})
+                        result = await executor.execute_commands(commands, current_session)
+                        
+                        # Mettre à jour la session utilisateur
+                        if 'user_session' in result:
+                            user_sessions[user_id] = result['user_session']
+                        
+                        # Gérer les actions spéciales
+                        if result.get('action') == 'new_conversation':
+                            # Ajouter l'ID de nouvelle conversation
+                            result['new_conversation_id'] = str(uuid.uuid4())
+                        elif result.get('action') == 'clear_conversation':
+                            # Ajouter l'action de nettoyage
+                            result['clear_messages'] = True
+                        
+                        # Retourner la réponse de la commande directement
+                        response_id = str(uuid.uuid4())
+                        return jsonify({
+                            "id": response_id,
+                            "choices": [{
+                                "messages": [{
+                                    "id": response_id,
+                                    "role": "assistant", 
+                                    "content": result['message'],
+                                    "date": datetime.now().isoformat()
+                                }]
+                            }],
+                            "command_result": result
+                        })
+
+        # DEBUG: Log incoming messages to see if images are present BEFORE processing
         logging.info(f"DEBUG: conversation_internal received {len(messages)} messages")
         for i, msg in enumerate(messages):
             logging.info(f"DEBUG: Message {i} - role: {msg.get('role')}, content type: {type(msg.get('content'))}")
@@ -645,6 +712,33 @@ async def conversation_internal(request_body, request_headers, preventShouldStre
                     if part.get('type') == 'image_url':
                         image_url = part.get('image_url', {}).get('url', '')
                         logging.info(f"DEBUG: Found image_url in conversation_internal, length: {len(image_url)}, preview: {image_url[:50]}...")
+
+        # Appliquer les préférences de session de l'utilisateur
+        if user_id and user_id in user_sessions:
+            session = user_sessions[user_id]
+            logging.info(f"Application des préférences de session pour {user_id}: {session}")
+            
+            # Appliquer le provider LLM de la session
+            if 'llm_provider' in session:
+                request_body['customizationPreferences'] = request_body.get('customizationPreferences', {})
+                request_body['customizationPreferences']['llmProvider'] = session['llm_provider']
+                logging.info(f"Provider LLM appliqué: {session['llm_provider']}")
+            
+            # Appliquer le nombre de documents de la session
+            if 'documents_count' in session:
+                request_body['documents_count'] = session['documents_count']
+            
+            # Appliquer la longueur de réponse de la session
+            if 'response_length' in session:
+                request_body['customizationPreferences'] = request_body.get('customizationPreferences', {})
+                # Mapper les valeurs du backend vers les valeurs du frontend
+                response_mapping = {
+                    'VERY_SHORT': 'veryShort',
+                    'NORMAL': 'medium',
+                    'COMPREHENSIVE': 'comprehensive'
+                }
+                mapped_size = response_mapping.get(session['response_length'], 'medium')
+                request_body['customizationPreferences']['responseSize'] = mapped_size
 
         if app_settings.azure_openai.stream and not app_settings.base_settings.use_promptflow and not preventShouldStream:
             logging.debug("Using streaming chat request")
@@ -909,6 +1003,7 @@ async def update_conversation():
         ## Format the incoming message object in the "chat/completions" messages format
         ## then write it to the conversation history in cosmos
         messages = request_json["messages"]
+        logging.info(f"DEBUG /history/update received {len(messages)} messages: {[{'role': m.get('role'), 'content_type': type(m.get('content')), 'content_preview': str(m.get('content'))[:50] if m.get('content') else 'None'} for m in messages]}")
         
         # Filter out invalid messages (empty objects, missing role, etc.)
         valid_messages = []
@@ -919,6 +1014,7 @@ async def update_conversation():
                 logging.warning(f"Filtering out invalid message: {msg}")
         
         messages = valid_messages
+        logging.info(f"DEBUG /history/update after filtering: {len(messages)} valid messages")
         
         if len(messages) > 0 and messages[-1]["role"] == "assistant":
             if len(messages) > 1 and messages[-2].get("role", None) == "tool":
@@ -937,7 +1033,10 @@ async def update_conversation():
                 input_message=messages[-1],
             )
         else:
-            raise Exception("No bot messages found")
+            # Pas de messages valides à sauvegarder, retourner succès sans erreur
+            logging.warning(f"No valid messages to save for conversation {conversation_id}, skipping history update")
+            response = {"success": True}
+            return jsonify(response), 200
 
         # Submit request to Chat Completions for response
         response = {"success": True}
@@ -1434,6 +1533,47 @@ async def generate_title(conversation_messages) -> str:
     except Exception as e:
         logging.exception("Exception while generating title", e)
         return messages[-2]["content"]
+
+
+@bp.route("/user/session", methods=["GET", "POST"])
+async def user_session():
+    """Endpoint pour gérer les préférences de session utilisateur"""
+    if not CheckAuthenticate(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user_id = GetDecryptedUsername(request)
+    if not user_id:
+        return jsonify({"error": "User not found"}), 400
+    
+    if request.method == "GET":
+        # Récupérer les préférences de session
+        session = user_sessions.get(user_id, {})
+        return jsonify({
+            "llm_provider": session.get('llm_provider'),
+            "documents_count": session.get('documents_count'),
+            "response_length": session.get('response_length')
+        })
+    
+    elif request.method == "POST":
+        # Mettre à jour les préférences de session
+        try:
+            data = await request.get_json()
+            if user_id not in user_sessions:
+                user_sessions[user_id] = {}
+            
+            if 'llm_provider' in data:
+                user_sessions[user_id]['llm_provider'] = data['llm_provider']
+            if 'documents_count' in data:
+                user_sessions[user_id]['documents_count'] = data['documents_count']
+            if 'response_length' in data:
+                user_sessions[user_id]['response_length'] = data['response_length']
+            
+            return jsonify({
+                "status": "success",
+                "session": user_sessions[user_id]
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
 
 def get_encryption_key():

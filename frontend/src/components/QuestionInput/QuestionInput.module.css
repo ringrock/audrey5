@@ -307,6 +307,45 @@
   color: #ffffff;
 }
 
+/* Conteneur pour le microphone et l'indicateur */
+.microphoneContainer {
+  position: relative;
+  display: inline-block;
+}
+
+/* Indicateur de point rouge clignotant après détection du wake word */
+.wakeWordIndicator {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background-color: #d13438;
+  border-radius: 50%;
+  border: 1px solid #ffffff;
+  animation: blink 1s ease-in-out infinite;
+  z-index: 10;
+}
+
+/* Animation de clignotement pour l'indicateur */
+@keyframes blink {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 3px rgba(209, 52, 56, 0.6);
+  }
+  50% {
+    opacity: 0.3;
+    box-shadow: 0 0 6px rgba(209, 52, 56, 0.8);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 3px rgba(209, 52, 56, 0.6);
+  }
+}
+
+/* Pas de style spécial pour le bouton - on garde le fond bleu existant */
+/* Seul le point rouge clignotant indique la détection du wake word */
+
 @keyframes pulse {
   0% {
     transform: scale(1);

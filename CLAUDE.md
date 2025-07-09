@@ -273,6 +273,7 @@ WAKE_WORD_PHRASES=["Patrick", "AskMe", "AskMi", "AsMi"]
 - Double-click microphone to activate continuous listening
 - System listens for wake words: "Patrick", "AskMe", "AskMi", "AsMi"
 - Say wake word followed by question: "Patrick, résume-moi la charte informatique"
+- **Visual Feedback**: Red blinking dot appears instantly on microphone icon when wake word is detected
 - Remains active between conversations for hands-free operation
 - Double-click again or single-click during listening to deactivate
 
@@ -280,6 +281,7 @@ WAKE_WORD_PHRASES=["Patrick", "AskMe", "AskMi", "AsMi"]
 - Automatically pauses during text-to-speech playback to prevent audio feedback
 - Seamlessly resumes wake word mode after audio playback (if it was active before)
 - Compatible with both Azure Speech and browser-based speech synthesis
+- **Instant Visual Response**: Wake word indicator activates on interim speech results for immediate user feedback
 
 ### Text-to-Speech (Voice Output)
 
@@ -467,3 +469,154 @@ processed_content = process_message_content_for_storage(input_message['content']
 - Maintains aspect ratio during compression
 - Preserves image quality while meeting size constraints
 - Graceful fallback: Returns original image if compression fails
+
+## Commandes de Chat
+
+L'application AskMe supporte un système de commandes qui permet aux utilisateurs de modifier les paramètres directement depuis le chat en utilisant des instructions en langage naturel.
+
+### Commandes Disponibles
+
+#### 1. Changement de Modèle LLM
+
+**Syntaxe :** `Modifie la config pour utiliser le modèle [NOM_MODELE]`
+
+**Exemples :**
+- `Modifie la config pour utiliser le modèle Gemini`
+- `Change la configuration pour passer sur Claude`
+- `Utilise le modèle Azure OpenAI`
+- `Switche sur Mistral`
+
+**Modèles supportés :**
+- `azure`, `azure openai`, `openai` → AZURE_OPENAI
+- `claude`, `anthropic` → CLAUDE
+- `openai direct`, `openai-direct` → OPENAI_DIRECT
+- `mistral` → MISTRAL
+- `gemini`, `google` → GEMINI
+
+**Réponse :** Message de confirmation avec le nouveau modèle utilisé ou erreur si le modèle n'est pas disponible.
+
+#### 2. Modification du Nombre de Documents
+
+**Syntaxe :** `Modifie la config pour récupérer [NOMBRE] doc maximum`
+
+**Exemples :**
+- `Modifie la config pour récupérer 10 doc maximum`
+- `Change la configuration pour avoir 5 documents de référence`
+- `Utilise 15 documents max`
+
+**Limites :**
+- Minimum : 1 document
+- Maximum : 50 documents (configurable)
+
+**Réponse :** Message de confirmation avec le nouveau nombre ou erreur si la limite est dépassée.
+
+#### 3. Modification de la Longueur des Réponses
+
+**Syntaxe :** `Modifie la config pour passer en réponses [TYPE]`
+
+**Exemples :**
+- `Modifie la config pour passer en réponses courtes`
+- `Change pour des réponses détaillées`
+- `Utilise des réponses normales`
+
+**Types supportés :**
+- **Courtes :** `court`, `courte`, `bref`, `brève`, `short` → VERY_SHORT
+- **Normales :** `normal`, `standard`, `moyen`, `moyenne` → NORMAL  
+- **Détaillées :** `long`, `détaillé`, `complet`, `comprehensive`, `exhaustif` → COMPREHENSIVE
+
+**Réponse :** Message de confirmation avec le nouveau type de réponse.
+
+#### 4. Création de Nouvelle Conversation
+
+**Syntaxe :** `Crée une nouvelle conversation`
+
+**Exemples :**
+- `Crée une nouvelle conversation`
+- `Génère une nouvelle discussion`
+- `Démarre un nouveau chat`
+- `Ouvre une nouvelle conversation`
+
+**Action :** Initialise une nouvelle conversation vide avec un nouvel ID.
+
+#### 5. Nettoyage de Conversation
+
+**Syntaxe :** `Nettoie la conversation`
+
+**Exemples :**
+- `Nettoie la conversation`
+- `Vide cette discussion`
+- `Efface l'historique`
+- `Reset la conversation`
+
+**Action :** Supprime tous les messages de la conversation actuelle.
+
+### Architecture Technique
+
+#### Backend (`backend/chat_commands.py`)
+
+**Classes principales :**
+- **`ChatCommandParser`** : Parse les messages en langage naturel pour détecter les commandes
+- **`ChatCommandExecutor`** : Exécute les commandes et gère les validations
+- **`ChatCommand`** : Représente une commande parsée avec ses paramètres
+
+**Intégration :**
+- Le système s'intègre dans `conversation_internal()` dans `app.py`
+- Détection automatique des commandes dans les messages utilisateur
+- Gestion des sessions utilisateur pour persister les préférences
+- Validation des paramètres avec messages d'erreur explicites
+
+#### Frontend (`frontend/src/pages/chat/Chat.tsx`)
+
+**Fonctions principales :**
+- **`processCommandResult()`** : Traite les réponses de commandes
+- Mise à jour automatique des préférences de personnalisation
+- Gestion des actions spéciales (nouvelle conversation, nettoyage)
+
+#### Session Utilisateur
+
+**Endpoint :** `/user/session` (GET/POST)
+**Stockage :** En mémoire sur le serveur (dictionnaire global `user_sessions`)
+**Paramètres persistés :**
+- `llm_provider` : Provider LLM sélectionné
+- `documents_count` : Nombre de documents de référence
+- `response_length` : Type de longueur de réponse
+
+### Commandes Multiples
+
+Le système supporte l'exécution de **commandes multiples** dans une seule phrase, permettant de modifier plusieurs paramètres en une fois :
+
+**Exemples de commandes multiples :**
+- `Modifie la config pour utiliser claude avec des réponses courtes et 5 documents max`
+- `Passe sur gemini avec réponses détaillées et 15 documents de référence`
+- `Utilise mistral des réponses moyennes et 3 documents maxi`
+
+**Fonctionnalités :**
+- **Traitement intelligent** : Le système détecte et exécute automatiquement toutes les commandes trouvées dans le message
+- **Réponse unifiée** : Une seule réponse de confirmation résume tous les changements effectués
+- **Support nombres écrits** : Reconnaissance des nombres en lettres ("trois documents") pour une meilleure compatibilité vocale
+- **Prévention des doublons** : Évite les messages de confirmation répétés grâce à un traitement centralisé
+
+### Gestion des Erreurs
+
+Le système fournit des messages d'erreur explicites en français :
+
+- **Modèle indisponible :** Liste des modèles disponibles
+- **Nombre de documents invalide :** Limites min/max autorisées
+- **Paramètres incorrects :** Suggestions de syntaxe correcte
+
+### Exemples d'Usage
+
+```
+Utilisateur: Modifie la config pour utiliser le modèle Gemini
+AskMe: Configuration modifiée avec succès. Le modèle gemini est maintenant utilisé.
+
+Utilisateur: Change pour récupérer 15 doc maximum  
+AskMe: Configuration modifiée avec succès. Le nombre maximum de documents de référence est maintenant 15.
+
+Utilisateur: Passe en réponses courtes
+AskMe: Configuration modifiée avec succès. Les réponses seront maintenant courtes.
+
+Utilisateur: Crée une nouvelle conversation
+AskMe: Nouvelle conversation créée avec succès.
+[L'interface se réinitialise avec une conversation vide]
+```

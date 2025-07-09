@@ -125,7 +125,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
             console.log('🔍 Ce message n\'est pas le dernier - pas d\'auto-lecture')
           }
         }
-      }, 300) // Délai réduit pour une expérience plus réactive
+      }, 100) // Délai très réduit pour un lancement rapide
       
       return () => clearTimeout(timeoutId)
     }

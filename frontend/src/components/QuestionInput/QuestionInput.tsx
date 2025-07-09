@@ -80,6 +80,7 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
       )
     }
   }, [onVoiceRecognitionReady, voiceRecognition.pauseVoiceRecognition, voiceRecognition.resumeVoiceRecognition])
+
   
   // Auto-audio functionality
   const toggleGlobalAutoAudio = () => {
@@ -604,25 +605,34 @@ export const QuestionInput = ({ onSend, disabled, placeholder, clearOnSend, conv
             onClick={voiceRecognition.toggleWakeWord}
             disabled={!voiceRecognition.speechSupported}
             aria-label={
-              voiceRecognition.isWakeWordListening 
-                ? "Mode écoute active (double-clic pour désactiver)" 
-                : voiceRecognition.isListening 
-                  ? "Reconnaissance vocale en cours..." 
-                  : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
+              voiceRecognition.isListeningAfterWakeWord
+                ? "Écoute de la commande après détection du mot-clé..."
+                : voiceRecognition.isWakeWordListening 
+                  ? "Mode écoute active (double-clic pour désactiver)" 
+                  : voiceRecognition.isListening 
+                    ? "Reconnaissance vocale en cours..." 
+                    : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
             }
             title={
-              voiceRecognition.isWakeWordListening 
-                ? "Mode écoute active (double-clic pour désactiver)" 
-                : voiceRecognition.isListening 
-                  ? "Reconnaissance vocale en cours..." 
-                  : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
+              voiceRecognition.isListeningAfterWakeWord
+                ? "Écoute de la commande après détection du mot-clé..."
+                : voiceRecognition.isWakeWordListening 
+                  ? "Mode écoute active (double-clic pour désactiver)" 
+                  : voiceRecognition.isListening 
+                    ? "Reconnaissance vocale en cours..." 
+                    : "Clic simple: reconnaissance vocale / Double-clic: mode écoute"
             }
           >
-            {voiceRecognition.isListening ? (
-              <MicOff20Regular className={styles.voiceIcon} />
-            ) : (
-              <Mic20Regular className={styles.voiceIcon} />
-            )}
+            <div className={styles.microphoneContainer}>
+              {voiceRecognition.isListening ? (
+                <MicOff20Regular className={styles.voiceIcon} />
+              ) : (
+                <Mic20Regular className={styles.voiceIcon} />
+              )}
+              {voiceRecognition.isListeningAfterWakeWord && (
+                <div className={styles.wakeWordIndicator} title="Wake word détecté!"></div>
+              )}
+            </div>
           </button>
         </div>
       )}

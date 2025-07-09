@@ -85,6 +85,19 @@ export type ChatResponse = {
     date: string
   }
   error?: any
+  command_result?: {
+    success: boolean
+    message: string
+    command_type: string
+    action?: string
+    new_conversation_id?: string
+    skip_history?: boolean
+    user_session?: {
+      llm_provider?: string
+      documents_count?: number
+      response_length?: string
+    }
+  }
 }
 
 export type ConversationRequest = {
