@@ -14,7 +14,13 @@
       "Bash(rg:*)",
       "Bash(find:*)",
       "Bash(git add:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(cd:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": []
   }
