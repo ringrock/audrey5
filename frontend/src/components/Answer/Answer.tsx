@@ -31,9 +31,10 @@ interface Props {
   resumeVoiceRecognition?: () => void
   isStreaming?: boolean
   questionImage?: string // Image base64 de la question précédente (optionnelle)
+  messageDate?: string // Date de création du message (optionnelle)
 }
 
-export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language, pauseVoiceRecognition, resumeVoiceRecognition, isStreaming, questionImage}: Props) => {
+export const Answer = ({ answer, onCitationClicked, onExectResultClicked, language, pauseVoiceRecognition, resumeVoiceRecognition, isStreaming, questionImage, messageDate}: Props) => {
   const appStateContext = useContext(AppStateContext)
   const initializeAnswerFeedback = (answer: AskResponse) => {
     if (answer.message_id == undefined) return undefined
@@ -44,6 +45,34 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   }
 
   localizedStrings.setLanguage(language);
+
+  // Fonction pour générer le disclaimer avec la date de création du message
+  const generateDisclaimer = () => {
+    // Utiliser la date du message si disponible, sinon la date actuelle
+    const date = messageDate ? new Date(messageDate) : new Date();
+    if (language === 'FR') {
+      const dateString = date.toLocaleDateString('fr-FR', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      return `Les réponses générées par l'IA peuvent être incorrectes - ${dateString}`;
+    } else {
+      const dateString = date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      return `AI-generated content may be incorrect - ${dateString}`;
+    }
+  };
 
   const [isRefAccordionOpen, { toggle: toggleIsRefAccordionOpen }] = useBoolean(false)
   const filePathTruncationLimit = 50
@@ -974,7 +1003,7 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
             </Stack.Item>
           )}
           <Stack.Item className={styles.answerDisclaimerContainer}>
-            <span className={styles.answerDisclaimer}>{localizedStrings.aiDisclaimer}</span>
+            <span className={styles.answerDisclaimer}>{generateDisclaimer()}</span>
           </Stack.Item>
           {!!answer.exec_results?.length && (
             <Stack.Item onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? toggleIsRefAccordionOpen() : null)}>

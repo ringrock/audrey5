@@ -1176,6 +1176,7 @@ const Chat = () => {
                           resumeVoiceRecognition={resumeVoiceRecognition}
                           isStreaming={isLoading}
                           questionImage={getQuestionImageForAnswer(index)}
+                          messageDate={answer.date}
                         />}
                       </div>
                     ) : answer.role === ERROR ? (
@@ -1205,6 +1206,7 @@ const Chat = () => {
                         resumeVoiceRecognition={resumeVoiceRecognition}
                         isStreaming={true}
                         questionImage={undefined}
+                        messageDate={undefined}
                       />
                     </div>
                   </>
