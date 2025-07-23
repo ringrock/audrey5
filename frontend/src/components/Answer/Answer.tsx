@@ -1,4 +1,4 @@
-import { FormEvent, useContext, useEffect, useMemo, useState, useRef } from 'react'
+import { FormEvent, useContext, useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { nord } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -90,6 +90,8 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
   const audioElementsRef = useRef<HTMLAudioElement[]>([])
   const abortControllerRef = useRef<AbortController | null>(null)
   const isManualStopRef = useRef<boolean>(false)
+  const citationTextRefs = useRef<{ [key: number]: HTMLSpanElement | null }>({})
+  const citationContainerRefs = useRef<{ [key: number]: HTMLSpanElement | null }>({})
   const FEEDBACK_ENABLED =
     appStateContext?.state.frontendSettings?.feedback_enabled && appStateContext?.state.isCosmosDBAvailable?.cosmosDB
   const SANITIZE_ANSWER = appStateContext?.state.frontendSettings?.sanitize_answer
@@ -205,6 +207,43 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
     }
     return citationFilename
   }
+
+  // Fonction pour calculer et appliquer le défilement dynamique des citations
+  const setupDynamicScrolling = useCallback(() => {
+    if (!parsedAnswer || !parsedAnswer.citations || parsedAnswer.citations.length === 0) return
+
+    parsedAnswer.citations.forEach((citation, index) => {
+      const citationTextElement = citationTextRefs.current[index + 1]
+      const citationContainerElement = citationContainerRefs.current[index + 1]
+      
+      if (citationTextElement && citationContainerElement) {
+        const textWidth = citationTextElement.scrollWidth
+        const containerWidth = citationContainerElement.offsetWidth
+        
+        // Largeur du conteneur de texte (après le numéro et sa marge)
+        const citationNumberWidth = 22 // largeur du numéro de citation (14px + padding + border)
+        const leftMargin = 8 // margin-left du conteneur de texte
+        const textContainerWidth = containerWidth - citationNumberWidth - leftMargin
+        
+        if (textWidth > textContainerWidth) {
+          // Calcul précis : défile exactement de la différence entre largeur texte et conteneur
+          const scrollDistance = textWidth - textContainerWidth
+          citationTextElement.style.setProperty('--scroll-distance', `-${scrollDistance}px`)
+        } else {
+          citationTextElement.style.setProperty('--scroll-distance', '0px')
+        }
+      }
+    })
+  }, [parsedAnswer])
+
+  // Effect pour recalculer le défilement quand les citations changent
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setupDynamicScrolling()
+    }, 100) // Petit délai pour que les éléments soient rendus
+    
+    return () => clearTimeout(timer)
+  }, [setupDynamicScrolling])
 
   const onLikeResponseClicked = async () => {
     if (answer.message_id == undefined) return;
@@ -1046,9 +1085,16 @@ export const Answer = ({ answer, onCitationClicked, onExectResultClicked, langua
                   onClick={() => onCitationClicked(citation)}
                   onKeyDown={e => (e.key === 'Enter' || e.key === ' ' ? onCitationClicked(citation) : null)}
                   className={styles.citationContainer}
+                  ref={el => citationContainerRefs.current[idx] = el}
                   aria-label={createCitationFilepath(citation, idx)}>
                   <div className={styles.citation}>{idx}</div>
-                  {createCitationFilepath(citation, idx, true)}
+                  <div className={styles.citationTextContainer}>
+                    <span 
+                      className={styles.citationText}
+                      ref={el => citationTextRefs.current[idx] = el}>
+                      {createCitationFilepath(citation, idx, false)}
+                    </span>
+                  </div>
                 </span>
                 { (shouldDisplayLink) &&
                   

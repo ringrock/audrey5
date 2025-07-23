@@ -88,18 +88,52 @@
   border-radius: 4px;
 
   flex-shrink: 0; /* Empêche la réduction du conteneur citation */
-  width: 300px; /* Fixez une largeur constante pour aligner les boutons */
-  max-width: 300px; /* Assurez-vous que les citations ne débordent pas */
-  overflow: hidden;
-  text-overflow: ellipsis; /* Ajoute "..." pour les longues citations */
+  width: 450px; /* Largeur augmentée pour plus de visibilité */
+  min-width: 450px; /* Largeur minimale garantie */
+  max-width: 450px; /* Limite par défaut */
+  overflow: hidden; /* Cache le débordement par défaut */
   white-space: nowrap; /* Empêche les retours à la ligne */
 
-  position:relative;
+  position: relative;
+  transition: all 0.3s ease; /* Animation fluide */
+}
+
+/* Conteneur pour le texte avec overflow caché */
+.citationTextContainer {
+  flex: 1;
+  overflow: hidden; /* Cache le texte qui dépasse à gauche */
+  margin-left: 8px; /* Marge pour séparer du numéro */
+}
+
+/* Texte de citation avec défilement interne */
+.citationText {
+  display: inline-block;
+  white-space: nowrap;
+  transition: transform 0.3s ease;
+}
+
+/* Défilement du texte au survol - reste dans la boîte */
+.citationContainer:hover .citationText {
+  animation: scrollTextInside 6s ease-in-out infinite;
+  animation-delay: 0.5s;
+}
+
+/* Animation de défilement horizontal dans la boîte */
+@keyframes scrollTextInside {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(0); } /* Pause plus longue au début */
+  75% { transform: translateX(var(--scroll-distance, -120px)); } /* Utilise la distance calculée dynamiquement */
+  100% { transform: translateX(0); } /* Retour au début */
 }
 
 .citationContainer:hover {
   text-decoration: underline;
   cursor: pointer;
+  /* Garde la taille fixe - pas d'agrandissement */
+  z-index: 999; /* Passe au-dessus des autres éléments */
+  background-color: #ffffff; /* Fond blanc pour la lisibilité */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* Ombre pour l'effet flottant */
+  border-color: #115ea3; /* Bordure plus prononcée au survol */
 }
 
 .citation {
@@ -358,7 +392,33 @@ sup {
   }
 
   .dropdownMenu {
-
     width: auto;
   }
+
+  /* Citations plus petites sur mobile */
+  .citationContainer {
+    width: 280px;
+    min-width: 280px;
+    max-width: 280px;
+  }
+
+  .citationContainer:hover {
+    /* Garde la taille fixe sur mobile aussi */
+  }
 }
+
+/* Plus besoin d'animation spécifique pour tablette - utilise la version dynamique */
+
+@media (max-width: 480px) {
+  .citationContainer {
+    width: 250px;
+    min-width: 250px;
+    max-width: 250px;
+  }
+
+  .citationContainer:hover {
+    /* Garde la taille fixe sur très petits écrans aussi */
+  }
+}
+
+/* Plus besoin d'animation spécifique pour mobile - utilise la version dynamique */
