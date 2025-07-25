@@ -20,7 +20,11 @@
       "Bash(cd:*)",
       "Bash(curl:*)",
       "Bash(npm run build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(docker:*)",
+      "Bash(timeout 300 npm run build)",
+      "Bash(pkill:*)",
+      "Bash(./start.sh:*)"
     ],
     "deny": []
   }
