@@ -10,3 +10,7 @@ uvicorn==0.24.0
 aiohttp==3.9.2
 gunicorn==20.1.0
 pydantic-settings==2.2.1
+
+pyodbc==5.1.0
+langchain==0.1.16
+sqlalchemy==2.0.30
