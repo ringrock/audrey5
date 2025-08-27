@@ -11,6 +11,8 @@ This repo contains sample code for a simple chat webapp that integrates with Azu
   - Pinecone index (private preview)
   - Azure SQL Server (private preview)
   - Mongo DB (preview)
+ 
+- 
 
 ## Configure the app
 
