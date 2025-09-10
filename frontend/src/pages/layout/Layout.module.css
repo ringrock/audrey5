@@ -5,7 +5,8 @@
 }
 
 .header {
-  background-color: #f2f2f2;
+  background-color: #1a1a1a; /* Change: Set a dark charcoal background */
+  border-bottom: 1px solid #ff3333; /* Change: Add a red bottom border */
 }
 
 .headerContainer {
@@ -28,7 +29,7 @@
   line-height: 28px;
   display: flex;
   align-items: flex-end;
-  color: #242424;
+  color: #ff3333; /* Change: Set title color to red */
 }
 
 .headerIcon {
@@ -76,18 +77,18 @@
   align-items: center;
   padding: 5px 12px;
   gap: 4px;
-  background: #ffffff;
-  border: 1px solid #d1d1d1;
+  background: #ff3333; /* Change: Set button background to red */
+  border: 1px solid #ff0000; /* Change: Set button border to a darker red */
   border-radius: 4px;
 }
 
 .copyButtonContainer:hover {
   cursor: pointer;
-  background: #d1d1d1;
+  background: #cc0000; /* Change: Darker red on hover */
 }
 
 .copyButton {
-  color: #424242;
+  color: #ffffff; /* Change: Make icon white */
 }
 
 .copyButtonText {
@@ -97,7 +98,7 @@
   line-height: 20px;
   display: flex;
   align-items: center;
-  color: #242424;
+  color: #ffffff; /* Change: Make text white */
 }
 
 @media (max-width: 480px) {
