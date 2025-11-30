@@ -238,6 +238,14 @@ async def init_cosmosdb_client():
     return cosmos_conversation_client
 
 
+
+currentDateTime = datetime.now()
+appendSysMessageDate = f" It is {currentDateTime}."
+
+authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+user_display_name = authenticated_user["displayName"]
+appendSysMessageUserName = f" My name is {user_display_name}."
+
 def prepare_model_args(request_body, request_headers):
     request_messages = request_body.get("messages", [])
     messages = []
@@ -245,7 +253,7 @@ def prepare_model_args(request_body, request_headers):
         messages = [
             {
                 "role": "system",
-                "content": app_settings.azure_openai.system_message
+                "content": app_settings.azure_openai.system_message + appendSysMessageDate + appendSysMessageUserName
             }
         ]
 
